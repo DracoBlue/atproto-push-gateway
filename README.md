@@ -9,11 +9,11 @@ Bluesky's push infrastructure (`push.bsky.app`) is closed source and does not se
 ## How It Works
 
 ```
-Your App                      PDS (user's)              push.yourdomain.com
+Your App                      PDS (user's)              push.example.org
     │                            │                            │
     │─── registerPush ──────────>│                            │
     │    serviceDid:             │─── XRPC forward ──────────>│
-    │    did:web:push.your.com   │    + Service-Auth JWT       │
+    │    did:web:push.example.org   │    + Service-Auth JWT       │
     │                            │                            │── store token in SQLite
     │                            │                            │
     │                            │                    Jetstream│
@@ -102,7 +102,7 @@ docker run -d \
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `PUSH_GATEWAY_DID` | `did:web:localhost` | Your service DID (e.g. `did:web:push.kiesel.app`) |
+| `PUSH_GATEWAY_DID` | `did:web:localhost` | Your service DID (e.g. `did:web:push.example.org`) |
 | `PUSH_GATEWAY_PORT` | `8080` | HTTP server port |
 | `SQLITE_PATH` | `./push-gateway.db` | Path to SQLite database file |
 | `JETSTREAM_URL` | `wss://jetstream2.us-east.bsky.network/subscribe` | Jetstream WebSocket URL |
@@ -118,11 +118,11 @@ Host `/.well-known/did.json` on your domain:
 ```json
 {
   "@context": ["https://www.w3.org/ns/did/v1"],
-  "id": "did:web:push.yourdomain.com",
+  "id": "did:web:push.example.org",
   "service": [{
     "id": "#bsky_notif",
     "type": "BskyNotificationService",
-    "serviceEndpoint": "https://push.yourdomain.com"
+    "serviceEndpoint": "https://push.example.org"
   }]
 }
 ```
@@ -135,13 +135,13 @@ In your ATproto client, call `registerPush` with your gateway's DID:
 
 ```typescript
 agent.app.bsky.notification.registerPush({
-  serviceDid: 'did:web:push.yourdomain.com',
+  serviceDid: 'did:web:push.example.org',
   token: devicePushToken,
   platform: 'ios', // or 'android'
-  appId: 'com.your.app',
+  appId: 'org.example.app',
 }, {
   headers: {
-    'atproto-proxy': 'did:web:push.yourdomain.com#bsky_notif',
+    'atproto-proxy': 'did:web:push.example.org#bsky_notif',
   },
 });
 ```
