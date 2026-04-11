@@ -42,18 +42,19 @@ type RegisterPushRequest struct {
 type StatsProvider func() interface{}
 
 type Handler struct {
-	store         *store.Store
-	devMode       bool
-	statsProvider StatsProvider
-	didResolver   *did.Resolver
+	store              *store.Store
+	devMode            bool
+	statsProvider      StatsProvider
+	didResolver        *did.Resolver
+	onTokenRegistered  func()
 }
 
-func NewHandler(s *store.Store, devMode bool, sp StatsProvider) *Handler {
-	return &Handler{store: s, devMode: devMode, statsProvider: sp, didResolver: did.NewResolver()}
+func NewHandler(s *store.Store, devMode bool, sp StatsProvider, onTokenRegistered func()) *Handler {
+	return &Handler{store: s, devMode: devMode, statsProvider: sp, didResolver: did.NewResolver(), onTokenRegistered: onTokenRegistered}
 }
 
 func NewHandlerWithoutStats(s *store.Store, devMode bool) *Handler {
-	return &Handler{store: s, devMode: devMode, didResolver: did.NewResolver()}
+	return &Handler{store: s, devMode: devMode, didResolver: did.NewResolver(), onTokenRegistered: nil}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
@@ -133,6 +134,9 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[xrpc] registered token for %s (%s/%s)", actorDID, req.Platform, req.AppID)
+	if h.onTokenRegistered != nil {
+		h.onTokenRegistered()
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -313,6 +317,9 @@ func (h *Handler) handleTestRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[test] registered token for %s", req.ActorDID)
+	if h.onTokenRegistered != nil {
+		h.onTokenRegistered()
+	}
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "registered"})
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
@@ -83,6 +84,7 @@ type Consumer struct {
 	profileResolver *profile.Resolver
 	lastCursor      atomic.Int64
 	stopCh          chan struct{}
+	startCh         chan struct{} // closed when first token registered
 
 	// Stats
 	eventsReceived atomic.Int64
@@ -113,13 +115,19 @@ func (c *Consumer) GetStats() Stats {
 }
 
 func NewConsumer(url string, s *store.Store, sender *push.MultiSender, profileResolver *profile.Resolver) *Consumer {
-	return &Consumer{
+	c := &Consumer{
 		url:             url,
 		store:           s,
 		sender:          sender,
 		profileResolver: profileResolver,
 		stopCh:          make(chan struct{}),
+		startCh:         make(chan struct{}),
 	}
+	// If tokens already exist (from SQLite on restart), start immediately
+	if s.HasRegisteredDIDs() {
+		close(c.startCh)
+	}
+	return c
 }
 
 // Stop signals the consumer to stop reconnecting.
@@ -127,19 +135,25 @@ func (c *Consumer) Stop() {
 	close(c.stopCh)
 }
 
+// NotifyTokenRegistered signals that a token was registered.
+// If the consumer hasn't started yet, this will start it.
+func (c *Consumer) NotifyTokenRegistered() {
+	select {
+	case <-c.startCh:
+		// already started
+	default:
+		close(c.startCh)
+	}
+}
+
 func (c *Consumer) Run() {
 	// Wait until at least one token is registered before connecting to Jetstream
-	for {
-		if c.store.HasRegisteredDIDs() {
-			break
-		}
-		select {
-		case <-c.stopCh:
-			log.Println("[jetstream] consumer stopped before starting")
-			return
-		case <-time.After(5 * time.Second):
-			log.Println("[jetstream] waiting for first token registration...")
-		}
+	select {
+	case <-c.startCh:
+		log.Println("[jetstream] first token registered, starting consumer")
+	case <-c.stopCh:
+		log.Println("[jetstream] consumer stopped before starting")
+		return
 	}
 
 	collections := []string{
@@ -150,10 +164,7 @@ func (c *Consumer) Run() {
 		"app.bsky.graph.block",
 	}
 
-	// Note: compress=true uses zstd which requires a zstd decompressor.
-	// gorilla/websocket doesn't support zstd natively. Using uncompressed for now.
-	// Bandwidth: ~5-10 GB/day uncompressed (filtered) vs ~850 MB/day with zstd.
-	params := "?"
+	params := "?compress=true"
 	for _, col := range collections {
 		params += "&wantedCollections=" + col
 	}
@@ -215,7 +226,15 @@ func (c *Consumer) connect(url string) error {
 	}
 	defer conn.Close()
 
-	log.Println("[jetstream] connected")
+	// Create zstd decoder for compressed messages
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		log.Printf("[jetstream] failed to create zstd decoder: %v", err)
+		return err
+	}
+	defer decoder.Close()
+
+	log.Println("[jetstream] connected (zstd compression enabled)")
 
 	for {
 		select {
@@ -224,14 +243,25 @@ func (c *Consumer) connect(url string) error {
 		default:
 		}
 
-		_, message, err := conn.ReadMessage()
+		msgType, message, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("[jetstream] read error: %v", err)
 			return err
 		}
 
-		c.eventsReceived.Add(1)
 		c.bytesReceived.Add(int64(len(message)))
+
+		// Decompress if binary (zstd compressed)
+		if msgType == websocket.BinaryMessage {
+			decompressed, err := decoder.DecodeAll(message, nil)
+			if err != nil {
+				log.Printf("[jetstream] zstd decompress error: %v", err)
+				continue
+			}
+			message = decompressed
+		}
+
+		c.eventsReceived.Add(1)
 
 		var event Event
 		if err := json.Unmarshal(message, &event); err != nil {
