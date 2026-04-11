@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	cacheTTL      = 1 * time.Hour
-	maxCacheSize  = 10000
+	cacheTTL       = 1 * time.Hour
+	maxCacheSize   = 10000
 	requestTimeout = 5 * time.Second
 )
 
 type cacheEntry struct {
 	displayName string
+	handle      string
 	cachedAt    time.Time
 }
 
@@ -42,61 +43,70 @@ func NewResolver() *Resolver {
 	}
 }
 
-func (r *Resolver) ResolveDisplayName(did string) string {
+// ResolveProfile returns (displayName, handle) for a DID.
+// Falls back to ("", "") on error — the client handles formatting.
+func (r *Resolver) ResolveProfile(did string) (string, string) {
 	// Check cache first
 	r.mu.RLock()
 	if entry, ok := r.cache[did]; ok && time.Since(entry.cachedAt) < cacheTTL {
 		r.mu.RUnlock()
-		return entry.displayName
+		return entry.displayName, entry.handle
 	}
 	r.mu.RUnlock()
 
 	// Fetch profile from the public API
-	name := r.fetchDisplayName(did)
+	displayName, handle := r.fetchProfile(did)
 
 	// Cache the result
 	r.mu.Lock()
-	// Evict oldest entries if cache is full
 	if len(r.cache) >= maxCacheSize {
 		r.evictOldest()
 	}
 	r.cache[did] = cacheEntry{
-		displayName: name,
+		displayName: displayName,
+		handle:      handle,
 		cachedAt:    time.Now(),
 	}
 	r.mu.Unlock()
 
-	return name
+	return displayName, handle
 }
 
-func (r *Resolver) fetchDisplayName(did string) string {
+// ResolveDisplayName returns a human-readable name for a DID.
+// Returns displayName if available, then handle, then the DID.
+func (r *Resolver) ResolveDisplayName(did string) string {
+	displayName, handle := r.ResolveProfile(did)
+	if displayName != "" {
+		return displayName
+	}
+	if handle != "" {
+		return handle
+	}
+	return did
+}
+
+func (r *Resolver) fetchProfile(did string) (string, string) {
 	reqURL := fmt.Sprintf("https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=%s", url.QueryEscape(did))
 
 	resp, err := r.client.Get(reqURL)
 	if err != nil {
 		log.Printf("[profile] error fetching profile for %s: %v", did, err)
-		return did
+		return "", ""
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("[profile] non-200 response for %s: %d", did, resp.StatusCode)
-		return did
+		return "", ""
 	}
 
 	var profile profileResponse
 	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
 		log.Printf("[profile] error decoding profile for %s: %v", did, err)
-		return did
+		return "", ""
 	}
 
-	if profile.DisplayName != "" {
-		return profile.DisplayName
-	}
-	if profile.Handle != "" {
-		return profile.Handle
-	}
-	return did
+	return profile.DisplayName, profile.Handle
 }
 
 // evictOldest removes the oldest quarter of cache entries.
@@ -112,13 +122,11 @@ func (r *Resolver) evictOldest() {
 		entries = append(entries, didTime{did: did, cachedAt: entry.cachedAt})
 	}
 
-	// Find entries to evict: remove the oldest quarter
 	toEvict := len(entries) / 4
 	if toEvict < 1 {
 		toEvict = 1
 	}
 
-	// Simple approach: find and remove the oldest entries
 	for i := 0; i < toEvict; i++ {
 		oldestIdx := 0
 		for j := 1; j < len(entries); j++ {
@@ -127,7 +135,6 @@ func (r *Resolver) evictOldest() {
 			}
 		}
 		delete(r.cache, entries[oldestIdx].did)
-		// Remove from slice by swapping with last
 		entries[oldestIdx] = entries[len(entries)-1]
 		entries = entries[:len(entries)-1]
 	}

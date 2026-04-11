@@ -443,39 +443,22 @@ func (c *Consumer) sendNotification(actorDID, targetDID, notifType, subjectURI s
 
 	c.matchedEvents.Add(1)
 
-	titles := map[string]string{
-		"like":    "New like",
-		"repost":  "New repost",
-		"reply":   "New reply",
-		"mention": "You were mentioned",
-		"quote":   "You were quoted",
-		"follow":  "New follower",
-	}
-
-	// Resolve actorDID to a display name for the notification body
-	displayName := actorDID
+	// Resolve actorDID to display name + handle for client-side formatting
+	actorDisplayName := ""
+	actorHandle := ""
 	if c.profileResolver != nil {
-		displayName = c.profileResolver.ResolveDisplayName(actorDID)
-	}
-
-	bodies := map[string]string{
-		"like":    displayName + " liked your post",
-		"repost":  displayName + " reposted your post",
-		"reply":   displayName + " replied to your post",
-		"mention": displayName + " mentioned you",
-		"quote":   displayName + " quoted your post",
-		"follow":  displayName + " followed you",
+		actorDisplayName, actorHandle = c.profileResolver.ResolveProfile(actorDID)
 	}
 
 	for _, token := range tokens {
 		n := push.Notification{
 			Token:    token.PushToken,
 			Platform: token.Platform,
-			Title:    titles[notifType],
-			Body:     bodies[notifType],
 			Data: map[string]string{
-				"type":     notifType,
-				"actorDid": actorDID,
+				"type":             notifType,
+				"actorDid":         actorDID,
+				"actorDisplayName": actorDisplayName,
+				"actorHandle":      actorHandle,
 			},
 		}
 		if subjectURI != "" {

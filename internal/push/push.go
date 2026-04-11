@@ -28,7 +28,7 @@ type ExpoPushSender struct {
 
 type expoMessage struct {
 	To    string            `json:"to"`
-	Title string            `json:"title"`
+	Title string            `json:"title,omitempty"`
 	Body  string            `json:"body"`
 	Data  map[string]string `json:"data,omitempty"`
 	Sound string            `json:"sound,omitempty"`
