@@ -154,10 +154,65 @@ The service must be reachable via HTTPS (required for DID document resolution an
 
 - **Language:** Go
 - **Database:** SQLite (single file, no external DB server)
-- **Event Source:** [Jetstream](https://github.com/bluesky-social/jetstream) (~850 MB/day filtered, vs 232 GB/day full firehose)
+- **Event Source:** [Jetstream](https://github.com/bluesky-social/jetstream) with zstd compression
 - **Push Delivery:** Expo Push API (FCM/APNs stubs ready for extension)
 - **In-Memory:** Hashmap of registered DIDs + block graph for fast matching
 - **Single process, single container, no external services**
+
+### Why Not Use Bluesky's Push Service?
+
+Bluesky's push infrastructure (`push.bsky.app`) is closed source and **does not send push notifications to third-party apps**. This was confirmed by Bluesky engineer pfrazee in [GitHub Discussion #1914](https://github.com/bluesky-social/atproto/discussions/1914): *"Bluesky will not send push notifications to 3rd parties. You have to setup your own backend to do that."*
+
+The `registerPush` call succeeds (returns 200 OK) because the PDS stores the token, but the push delivery service at `push.bsky.app` only has the APNs/FCM certificates for `xyz.blueskyweb.app` — it cannot push to your app's bundle ID.
+
+### How the ATproto Push Chain Works
+
+```
+Client App → PDS (proxy) → AppView (api.bsky.app)
+                                    ↓
+                              push.bsky.app ← CLOSED SOURCE
+                                    ↓
+                              APNs / FCM → Device (Bluesky app only)
+```
+
+This gateway replaces `push.bsky.app` with your own service:
+
+```
+Client App → PDS (proxy) → YOUR push gateway (push.example.org)
+                                    ↓
+                              Jetstream (event detection)
+                                    ↓
+                              APNs / FCM / Expo → Device (YOUR app)
+```
+
+### Jetstream Bandwidth
+
+The gateway subscribes to [Jetstream](https://github.com/bluesky-social/jetstream) instead of the raw firehose:
+
+| Mode | Bandwidth/Day | Factor |
+|---|---|---|
+| Raw Firehose (CBOR/CAR) | ~232 GB | Baseline |
+| Jetstream uncompressed (JSON) | ~5-10 GB | ~25x smaller |
+| **Jetstream + zstd** (this gateway) | **~850 MB** | ~270x smaller |
+
+zstd compression reduces bandwidth by ~85-90% vs uncompressed JSON. CPU overhead for decompression is minimal (~1-2% of a core at full stream).
+
+### Lazy Start
+
+The Jetstream connection is only established when the first push token is registered. Until then, zero bandwidth is consumed. On restart, if tokens exist in SQLite, the connection starts immediately.
+
+### JWT Verification
+
+The PDS forwards `registerPush` calls with an inter-service JWT signed by the user's identity key. This gateway:
+
+1. Decodes the JWT and validates claims (`iss`, `aud`, `lxm`, `exp`)
+2. Resolves the issuer DID (`did:plc` via plc.directory, `did:web` via .well-known/did.json)
+3. Extracts the `#atproto` signing key from the DID document
+4. Verifies the ECDSA signature (ES256 P-256 fully supported, ES256K secp256k1 with graceful degradation)
+
+### Display Name Resolution
+
+Push notification bodies show display names ("Alice liked your post") instead of raw DIDs. Names are resolved via the public AppView API (`app.bsky.actor.getProfile`) and cached in memory (1 hour TTL, max 10,000 entries).
 
 ## Block Handling
 
