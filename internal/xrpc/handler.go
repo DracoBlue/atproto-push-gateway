@@ -1,12 +1,23 @@
 package xrpc
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 )
+
+type jwtClaims struct {
+	Iss string `json:"iss"`
+	Aud string `json:"aud"`
+	Lxm string `json:"lxm"`
+	Exp int64  `json:"exp"`
+}
 
 type RegisterPushRequest struct {
 	ServiceDID    string `json:"serviceDid"`
@@ -138,15 +149,53 @@ func (h *Handler) verifyAuth(r *http.Request) (string, error) {
 		}
 	}
 
-	// TODO: Full inter-service JWT verification
-	// 1. Extract Bearer token from Authorization header
-	// 2. Decode JWT header + claims
-	// 3. Resolve iss DID → get public key from DID document
-	// 4. Verify Schnorr/ES256K signature
-	// 5. Check: aud matches our service DID, lxm matches method, exp valid
-	// 6. Optional: jti replay protection
+	// Extract Bearer token from Authorization header
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return "", fmt.Errorf("missing or invalid Authorization header")
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
 
-	return "", http.ErrAbortHandler
+	// Decode JWT claims (header.payload.signature)
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("malformed JWT: expected 3 parts, got %d", len(parts))
+	}
+
+	// Decode the payload (second part)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("failed to decode JWT payload: %w", err)
+	}
+
+	var claims jwtClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", fmt.Errorf("failed to parse JWT claims: %w", err)
+	}
+
+	// Check expiry
+	if claims.Exp == 0 {
+		return "", fmt.Errorf("JWT missing exp claim")
+	}
+	if time.Now().Unix() > claims.Exp {
+		return "", fmt.Errorf("JWT expired")
+	}
+
+	// Check issuer is present and looks like a DID
+	if claims.Iss == "" {
+		return "", fmt.Errorf("JWT missing iss claim")
+	}
+	if !strings.HasPrefix(claims.Iss, "did:") {
+		return "", fmt.Errorf("JWT iss is not a DID: %s", claims.Iss)
+	}
+
+	// TODO: Full DID-based signature verification
+	// 1. Resolve iss DID → get public key from DID document
+	// 2. Verify signature (ES256K / k256) using the resolved key
+	// 3. Check: aud matches our service DID, lxm matches the XRPC method
+	// 4. Optional: jti replay protection
+
+	return claims.Iss, nil
 }
 
 // Dev mode: register without JWT

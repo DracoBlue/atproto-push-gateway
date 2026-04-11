@@ -41,6 +41,14 @@ func NewExpoPushSender(accessToken string) *ExpoPushSender {
 	}
 }
 
+// truncateToken safely truncates a token for logging, avoiding panics on short tokens.
+func truncateToken(token string, maxLen int) string {
+	if len(token) <= maxLen {
+		return token
+	}
+	return token[:maxLen] + "..."
+}
+
 func (e *ExpoPushSender) Send(n Notification) error {
 	msg := expoMessage{
 		To:    n.Token,
@@ -75,11 +83,11 @@ func (e *ExpoPushSender) Send(n Notification) error {
 		return fmt.Errorf("expo push API returned %d", resp.StatusCode)
 	}
 
-	log.Printf("[push/expo] sent to %s: %s", n.Token[:20]+"...", n.Title)
+	log.Printf("[push/expo] sent to %s: %s", truncateToken(n.Token, 20), n.Title)
 	return nil
 }
 
-// MultiSender routes to the correct sender based on token format
+// MultiSender routes to the correct sender based on platform
 type MultiSender struct {
 	Expo *ExpoPushSender
 	// FCM  *FCMSender  // TODO
@@ -93,12 +101,16 @@ func NewMultiSender(expoToken string) *MultiSender {
 }
 
 func (m *MultiSender) Send(n Notification) error {
-	// Expo tokens start with "ExponentPushToken["
-	if len(n.Token) > 18 && n.Token[:18] == "ExponentPushToken[" {
+	switch n.Platform {
+	case "ios", "android":
+		// Currently all mobile push is routed through Expo
 		return m.Expo.Send(n)
+	case "web":
+		// TODO: implement web push (Web Push API / VAPID)
+		log.Printf("[push] web push not yet supported, token: %s", truncateToken(n.Token, 20))
+		return fmt.Errorf("web push not yet supported")
+	default:
+		log.Printf("[push] unsupported platform %q, token: %s", n.Platform, truncateToken(n.Token, 20))
+		return fmt.Errorf("unsupported platform: %s", n.Platform)
 	}
-
-	// TODO: route to FCM or APNs based on platform
-	log.Printf("[push] unsupported token format for platform %s: %s", n.Platform, n.Token[:20]+"...")
-	return fmt.Errorf("unsupported token format, only Expo Push Tokens supported currently")
 }

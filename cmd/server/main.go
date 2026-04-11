@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/dracoblue/atproto-push-gateway/internal/jetstream"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
@@ -38,7 +42,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize store: %v", err)
 	}
-	defer s.Close()
 
 	tokens, blocks, dids := s.GetStats()
 	log.Printf("  Loaded: %d tokens, %d blocks, %d DIDs", tokens, blocks, dids)
@@ -55,8 +58,39 @@ func main() {
 	handler := xrpc.NewHandler(s, devMode)
 	handler.RegisterRoutes(mux, serviceDID)
 
-	log.Printf("  Listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatalf("Server error: %v", err)
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
 	}
+
+	// Start HTTP server in a goroutine
+	go func() {
+		log.Printf("  Listening on :%s", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server error: %v", err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigCh
+	log.Printf("Received signal %v, shutting down...", sig)
+
+	// Stop Jetstream consumer
+	consumer.Stop()
+
+	// Gracefully shutdown HTTP server with a 10-second timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
+	}
+
+	// Close SQLite database
+	if err := s.Close(); err != nil {
+		log.Printf("Store close error: %v", err)
+	}
+
+	log.Println("Shutdown complete")
 }

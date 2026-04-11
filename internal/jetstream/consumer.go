@@ -2,8 +2,10 @@ package jetstream
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -28,6 +30,13 @@ type CommitEvent struct {
 }
 
 type LikeRecord struct {
+	Subject struct {
+		URI string `json:"uri"`
+		CID string `json:"cid"`
+	} `json:"subject"`
+}
+
+type RepostRecord struct {
 	Subject struct {
 		URI string `json:"uri"`
 		CID string `json:"cid"`
@@ -67,9 +76,11 @@ type BlockRecord struct {
 }
 
 type Consumer struct {
-	url    string
-	store  *store.Store
-	sender *push.MultiSender
+	url        string
+	store      *store.Store
+	sender     *push.MultiSender
+	lastCursor atomic.Int64
+	stopCh     chan struct{}
 }
 
 func NewConsumer(url string, s *store.Store, sender *push.MultiSender) *Consumer {
@@ -77,7 +88,13 @@ func NewConsumer(url string, s *store.Store, sender *push.MultiSender) *Consumer
 		url:    url,
 		store:  s,
 		sender: sender,
+		stopCh: make(chan struct{}),
 	}
+}
+
+// Stop signals the consumer to stop reconnecting.
+func (c *Consumer) Stop() {
+	close(c.stopCh)
 }
 
 func (c *Consumer) Run() {
@@ -97,35 +114,86 @@ func (c *Consumer) Run() {
 		params += "wantedCollections=" + col
 	}
 
+	backoff := time.Second
+	const maxBackoff = 60 * time.Second
+
 	for {
-		c.connect(c.url + params)
-		log.Println("[jetstream] reconnecting in 5s...")
-		time.Sleep(5 * time.Second)
+		select {
+		case <-c.stopCh:
+			log.Println("[jetstream] consumer stopped")
+			return
+		default:
+		}
+
+		connectURL := c.url + params
+		// If we have a cursor from a previous connection, include it to resume
+		if cursor := c.lastCursor.Load(); cursor > 0 {
+			connectURL += fmt.Sprintf("&cursor=%d", cursor)
+		}
+
+		err := c.connect(connectURL)
+		if err == nil {
+			// Successful connection that ended normally; reset backoff
+			backoff = time.Second
+		}
+
+		select {
+		case <-c.stopCh:
+			log.Println("[jetstream] consumer stopped")
+			return
+		default:
+		}
+
+		log.Printf("[jetstream] reconnecting in %v...", backoff)
+
+		select {
+		case <-time.After(backoff):
+		case <-c.stopCh:
+			log.Println("[jetstream] consumer stopped")
+			return
+		}
+
+		// Exponential backoff: double each time, cap at maxBackoff
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 }
 
-func (c *Consumer) connect(url string) {
+func (c *Consumer) connect(url string) error {
 	log.Printf("[jetstream] connecting to %s", url)
 
 	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
 	if err != nil {
 		log.Printf("[jetstream] dial error: %v", err)
-		return
+		return err
 	}
 	defer conn.Close()
 
 	log.Println("[jetstream] connected")
 
 	for {
+		select {
+		case <-c.stopCh:
+			return nil
+		default:
+		}
+
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("[jetstream] read error: %v", err)
-			return
+			return err
 		}
 
 		var event Event
 		if err := json.Unmarshal(message, &event); err != nil {
 			continue
+		}
+
+		// Track cursor for reconnect resume
+		if event.TimeUS > 0 {
+			c.lastCursor.Store(event.TimeUS)
 		}
 
 		if event.Kind != "commit" || event.Commit == nil {
@@ -156,11 +224,9 @@ func (c *Consumer) handleCommit(actorDID string, commit *CommitEvent) {
 		}
 	case "app.bsky.graph.block":
 		if commit.Operation == "create" {
-			c.handleBlockCreate(actorDID, commit.Record)
+			c.handleBlockCreate(actorDID, commit.RKey, commit.Record)
 		} else if commit.Operation == "delete" {
-			// For delete, we don't have the record anymore
-			// Block deletes need to be handled differently
-			// For now we skip — blocks accumulate but don't get removed via jetstream delete
+			c.handleBlockDelete(actorDID, commit.RKey)
 		}
 	}
 }
@@ -192,17 +258,17 @@ func (c *Consumer) handleLike(actorDID string, record json.RawMessage) {
 }
 
 func (c *Consumer) handleRepost(actorDID string, record json.RawMessage) {
-	var like LikeRecord // same structure: subject.uri
-	if err := json.Unmarshal(record, &like); err != nil {
+	var repost RepostRecord
+	if err := json.Unmarshal(record, &repost); err != nil {
 		return
 	}
 
-	targetDID := extractDIDFromURI(like.Subject.URI)
+	targetDID := extractDIDFromURI(repost.Subject.URI)
 	if targetDID == "" || targetDID == actorDID {
 		return
 	}
 
-	c.sendNotification(actorDID, targetDID, "repost", like.Subject.URI)
+	c.sendNotification(actorDID, targetDID, "repost", repost.Subject.URI)
 }
 
 func (c *Consumer) handlePost(actorDID string, record json.RawMessage) {
@@ -250,7 +316,7 @@ func (c *Consumer) handleFollow(actorDID string, record json.RawMessage) {
 	c.sendNotification(actorDID, follow.Subject, "follow", "")
 }
 
-func (c *Consumer) handleBlockCreate(actorDID string, record json.RawMessage) {
+func (c *Consumer) handleBlockCreate(actorDID string, rkey string, record json.RawMessage) {
 	var block BlockRecord
 	if err := json.Unmarshal(record, &block); err != nil {
 		return
@@ -262,8 +328,23 @@ func (c *Consumer) handleBlockCreate(actorDID string, record json.RawMessage) {
 
 	// Only track blocks for registered DIDs
 	if c.store.IsRegistered(actorDID) || c.store.IsRegistered(block.Subject) {
-		c.store.AddBlock(actorDID, block.Subject)
-		log.Printf("[jetstream] block: %s blocked %s", actorDID, block.Subject)
+		c.store.AddBlock(actorDID, block.Subject, rkey)
+		log.Printf("[jetstream] block: %s blocked %s (rkey=%s)", actorDID, block.Subject, rkey)
+	}
+}
+
+func (c *Consumer) handleBlockDelete(actorDID string, rkey string) {
+	if rkey == "" {
+		return
+	}
+
+	blockedDID, err := c.store.RemoveBlockByRKey(actorDID, rkey)
+	if err != nil {
+		log.Printf("[jetstream] error removing block by rkey: %v", err)
+		return
+	}
+	if blockedDID != "" {
+		log.Printf("[jetstream] unblock: %s unblocked %s (rkey=%s)", actorDID, blockedDID, rkey)
 	}
 }
 
@@ -292,12 +373,22 @@ func (c *Consumer) sendNotification(actorDID, targetDID, notifType, subjectURI s
 		"follow":  "New follower",
 	}
 
+	// TODO: Resolve actorDID to a display name via app.bsky.actor.getProfile
+	bodies := map[string]string{
+		"like":    "Someone liked your post",
+		"repost":  "Someone reposted your post",
+		"reply":   "Someone replied to your post",
+		"mention": "Someone mentioned you",
+		"quote":   "Someone quoted your post",
+		"follow":  "Someone followed you",
+	}
+
 	for _, token := range tokens {
 		n := push.Notification{
 			Token:    token.PushToken,
 			Platform: token.Platform,
 			Title:    titles[notifType],
-			Body:     actorDID, // TODO: resolve to display name
+			Body:     bodies[notifType],
 			Data: map[string]string{
 				"type":     notifType,
 				"actorDid": actorDID,

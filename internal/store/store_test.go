@@ -105,7 +105,7 @@ func TestUpsertToken(t *testing.T) {
 func TestBlocksAddAndCheck(t *testing.T) {
 	s := newTestStore(t)
 
-	s.AddBlock("did:plc:alice", "did:plc:bob")
+	s.AddBlock("did:plc:alice", "did:plc:bob", "")
 
 	tests := []struct {
 		name     string
@@ -131,7 +131,7 @@ func TestBlocksAddAndCheck(t *testing.T) {
 func TestBlockRemove(t *testing.T) {
 	s := newTestStore(t)
 
-	s.AddBlock("did:plc:alice", "did:plc:bob")
+	s.AddBlock("did:plc:alice", "did:plc:bob", "")
 	s.RemoveBlock("did:plc:alice", "did:plc:bob")
 
 	if s.IsBlocked("did:plc:alice", "did:plc:bob") {
@@ -144,7 +144,7 @@ func TestGetStats(t *testing.T) {
 
 	s.RegisterToken("did:plc:alice", "ios", "token1", "app.test")
 	s.RegisterToken("did:plc:bob", "android", "token2", "app.test")
-	s.AddBlock("did:plc:alice", "did:plc:carol")
+	s.AddBlock("did:plc:alice", "did:plc:carol", "")
 
 	tokens, blocks, dids := s.GetStats()
 	if tokens != 2 {
@@ -164,7 +164,7 @@ func TestPersistenceAcrossRestart(t *testing.T) {
 	// First instance: register
 	s1, _ := New(dbPath)
 	s1.RegisterToken("did:plc:alice", "ios", "token1", "app.test")
-	s1.AddBlock("did:plc:alice", "did:plc:bob")
+	s1.AddBlock("did:plc:alice", "did:plc:bob", "rkey1")
 	s1.Close()
 
 	// Second instance: should load from disk

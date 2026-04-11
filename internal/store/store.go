@@ -17,13 +17,15 @@ type PushToken struct {
 type Block struct {
 	BlockerDID string
 	BlockedDID string
+	RKey       string
 }
 
 type Store struct {
 	db         *sql.DB
 	mu         sync.RWMutex
 	registeredDIDs map[string]bool
-	blocks         map[string]map[string]bool // blocker -> blocked -> true
+	blocks         map[string]map[string]bool   // blocker -> blocked -> true
+	blocksByRKey   map[string]map[string]string // blocker -> rkey -> blocked
 }
 
 func New(dbPath string) (*Store, error) {
@@ -45,8 +47,10 @@ func New(dbPath string) (*Store, error) {
 		CREATE TABLE IF NOT EXISTS blocks (
 			blocker_did TEXT NOT NULL,
 			blocked_did TEXT NOT NULL,
+			rkey TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (blocker_did, blocked_did)
 		);
+		CREATE INDEX IF NOT EXISTS idx_blocks_rkey ON blocks (blocker_did, rkey);
 	`); err != nil {
 		return nil, err
 	}
@@ -55,8 +59,12 @@ func New(dbPath string) (*Store, error) {
 		db:             db,
 		registeredDIDs: make(map[string]bool),
 		blocks:         make(map[string]map[string]bool),
+		blocksByRKey:   make(map[string]map[string]string),
 	}
 
+	// loadIntoMemory is called without holding locks because the Store has not
+	// been returned yet — no other goroutine can have a reference to it, so
+	// there is no concurrent access at this point.
 	if err := s.loadIntoMemory(); err != nil {
 		return nil, err
 	}
@@ -80,20 +88,26 @@ func (s *Store) loadIntoMemory() error {
 	}
 
 	// Load blocks
-	blockRows, err := s.db.Query("SELECT blocker_did, blocked_did FROM blocks")
+	blockRows, err := s.db.Query("SELECT blocker_did, blocked_did, rkey FROM blocks")
 	if err != nil {
 		return err
 	}
 	defer blockRows.Close()
 	for blockRows.Next() {
-		var blocker, blocked string
-		if err := blockRows.Scan(&blocker, &blocked); err != nil {
+		var blocker, blocked, rkey string
+		if err := blockRows.Scan(&blocker, &blocked, &rkey); err != nil {
 			return err
 		}
 		if s.blocks[blocker] == nil {
 			s.blocks[blocker] = make(map[string]bool)
 		}
 		s.blocks[blocker][blocked] = true
+		if rkey != "" {
+			if s.blocksByRKey[blocker] == nil {
+				s.blocksByRKey[blocker] = make(map[string]string)
+			}
+			s.blocksByRKey[blocker][rkey] = blocked
+		}
 	}
 
 	return nil
@@ -164,10 +178,10 @@ func (s *Store) GetTokensForDID(did string) ([]PushToken, error) {
 	return tokens, nil
 }
 
-func (s *Store) AddBlock(blockerDID, blockedDID string) error {
+func (s *Store) AddBlock(blockerDID, blockedDID, rkey string) error {
 	_, err := s.db.Exec(
-		"INSERT OR IGNORE INTO blocks (blocker_did, blocked_did) VALUES (?, ?)",
-		blockerDID, blockedDID,
+		"INSERT OR IGNORE INTO blocks (blocker_did, blocked_did, rkey) VALUES (?, ?, ?)",
+		blockerDID, blockedDID, rkey,
 	)
 	if err != nil {
 		return err
@@ -178,9 +192,42 @@ func (s *Store) AddBlock(blockerDID, blockedDID string) error {
 		s.blocks[blockerDID] = make(map[string]bool)
 	}
 	s.blocks[blockerDID][blockedDID] = true
+	if rkey != "" {
+		if s.blocksByRKey[blockerDID] == nil {
+			s.blocksByRKey[blockerDID] = make(map[string]string)
+		}
+		s.blocksByRKey[blockerDID][rkey] = blockedDID
+	}
 	s.mu.Unlock()
 
 	return nil
+}
+
+// RemoveBlockByRKey looks up a block by blocker DID and rkey, then removes it.
+// Returns the blocked DID if found, or empty string if not found.
+func (s *Store) RemoveBlockByRKey(blockerDID, rkey string) (string, error) {
+	s.mu.RLock()
+	blockedDID := ""
+	if s.blocksByRKey[blockerDID] != nil {
+		blockedDID = s.blocksByRKey[blockerDID][rkey]
+	}
+	s.mu.RUnlock()
+
+	if blockedDID == "" {
+		return "", nil
+	}
+
+	if err := s.RemoveBlock(blockerDID, blockedDID); err != nil {
+		return "", err
+	}
+
+	s.mu.Lock()
+	if s.blocksByRKey[blockerDID] != nil {
+		delete(s.blocksByRKey[blockerDID], rkey)
+	}
+	s.mu.Unlock()
+
+	return blockedDID, nil
 }
 
 func (s *Store) RemoveBlock(blockerDID, blockedDID string) error {
