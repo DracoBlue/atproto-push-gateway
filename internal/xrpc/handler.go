@@ -27,12 +27,21 @@ type RegisterPushRequest struct {
 	AgeRestricted bool   `json:"ageRestricted,omitempty"`
 }
 
+// StatsProvider returns jetstream stats for the health endpoint.
+// Accepts any type — will be JSON-encoded directly.
+type StatsProvider func() interface{}
+
 type Handler struct {
-	store   *store.Store
-	devMode bool
+	store         *store.Store
+	devMode       bool
+	statsProvider StatsProvider
 }
 
-func NewHandler(s *store.Store, devMode bool) *Handler {
+func NewHandler(s *store.Store, devMode bool, sp StatsProvider) *Handler {
+	return &Handler{store: s, devMode: devMode, statsProvider: sp}
+}
+
+func NewHandlerWithoutStats(s *store.Store, devMode bool) *Handler {
 	return &Handler{store: s, devMode: devMode}
 }
 
@@ -62,12 +71,16 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
 	// Health check
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		tokens, blocks, dids := h.store.GetStats()
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":          "ok",
-			"registeredDIDs":  dids,
-			"totalTokens":     tokens,
-			"trackedBlocks":   blocks,
-		})
+		result := map[string]interface{}{
+			"status":         "ok",
+			"registeredDIDs": dids,
+			"totalTokens":    tokens,
+			"trackedBlocks":  blocks,
+		}
+		if h.statsProvider != nil {
+			result["jetstream"] = h.statsProvider()
+		}
+		json.NewEncoder(w).Encode(result)
 	})
 
 	// Test endpoint (dev mode only)

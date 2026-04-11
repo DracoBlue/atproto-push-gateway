@@ -19,7 +19,7 @@ func newTestHandler(t *testing.T) (*Handler, *store.Store) {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := NewHandler(s, true) // dev mode
+	h := NewHandlerWithoutStats(s, true) // dev mode
 	return h, s
 }
 
@@ -144,7 +144,7 @@ func TestRegisterPushNoAuth(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	s, _ := store.New(dbPath)
 	defer s.Close()
-	h := NewHandler(s, false) // production mode, no dev mode
+	h := NewHandlerWithoutStats(s, false) // production mode, no dev mode
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "did:web:push.example.org")

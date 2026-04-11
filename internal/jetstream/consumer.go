@@ -81,6 +81,33 @@ type Consumer struct {
 	sender     *push.MultiSender
 	lastCursor atomic.Int64
 	stopCh     chan struct{}
+
+	// Stats
+	eventsReceived atomic.Int64
+	bytesReceived  atomic.Int64
+	pushesSent     atomic.Int64
+	pushErrors     atomic.Int64
+	matchedEvents  atomic.Int64
+}
+
+type Stats struct {
+	EventsReceived int64 `json:"eventsReceived"`
+	BytesReceived  int64 `json:"bytesReceived"`
+	PushesSent     int64 `json:"pushesSent"`
+	PushErrors     int64 `json:"pushErrors"`
+	MatchedEvents  int64 `json:"matchedEvents"`
+	LastCursor     int64 `json:"lastCursor"`
+}
+
+func (c *Consumer) GetStats() Stats {
+	return Stats{
+		EventsReceived: c.eventsReceived.Load(),
+		BytesReceived:  c.bytesReceived.Load(),
+		PushesSent:     c.pushesSent.Load(),
+		PushErrors:     c.pushErrors.Load(),
+		MatchedEvents:  c.matchedEvents.Load(),
+		LastCursor:     c.lastCursor.Load(),
+	}
 }
 
 func NewConsumer(url string, s *store.Store, sender *push.MultiSender) *Consumer {
@@ -185,6 +212,9 @@ func (c *Consumer) connect(url string) error {
 			log.Printf("[jetstream] read error: %v", err)
 			return err
 		}
+
+		c.eventsReceived.Add(1)
+		c.bytesReceived.Add(int64(len(message)))
 
 		var event Event
 		if err := json.Unmarshal(message, &event); err != nil {
@@ -364,6 +394,8 @@ func (c *Consumer) sendNotification(actorDID, targetDID, notifType, subjectURI s
 		return
 	}
 
+	c.matchedEvents.Add(1)
+
 	titles := map[string]string{
 		"like":    "New like",
 		"repost":  "New repost",
@@ -399,7 +431,10 @@ func (c *Consumer) sendNotification(actorDID, targetDID, notifType, subjectURI s
 		}
 
 		if err := c.sender.Send(n); err != nil {
+			c.pushErrors.Add(1)
 			log.Printf("[jetstream] push error for %s: %v", targetDID, err)
+		} else {
+			c.pushesSent.Add(1)
 		}
 	}
 }
