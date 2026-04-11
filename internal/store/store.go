@@ -157,6 +157,12 @@ func (s *Store) IsRegistered(did string) bool {
 	return s.registeredDIDs[did]
 }
 
+func (s *Store) HasRegisteredDIDs() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.registeredDIDs) > 0
+}
+
 func (s *Store) GetTokensForDID(did string) ([]PushToken, error) {
 	rows, err := s.db.Query(
 		"SELECT actor_did, platform, push_token, app_id FROM push_tokens WHERE actor_did = ?",

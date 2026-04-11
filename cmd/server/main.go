@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dracoblue/atproto-push-gateway/internal/jetstream"
+	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 	"github.com/dracoblue/atproto-push-gateway/internal/xrpc"
@@ -49,8 +50,11 @@ func main() {
 	// Initialize push sender
 	sender := push.NewMultiSender(expoPushToken)
 
+	// Initialize profile resolver for display names
+	profileResolver := profile.NewResolver()
+
 	// Initialize Jetstream consumer
-	consumer := jetstream.NewConsumer(jetstreamURL, s, sender)
+	consumer := jetstream.NewConsumer(jetstreamURL, s, sender, profileResolver)
 	go consumer.Run()
 
 	// Initialize HTTP server

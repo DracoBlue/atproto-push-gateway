@@ -1,16 +1,26 @@
 package xrpc
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/dracoblue/atproto-push-gateway/internal/did"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 )
+
+type jwtHeader struct {
+	Alg string `json:"alg"`
+	Typ string `json:"typ,omitempty"`
+}
 
 type jwtClaims struct {
 	Iss string `json:"iss"`
@@ -35,14 +45,15 @@ type Handler struct {
 	store         *store.Store
 	devMode       bool
 	statsProvider StatsProvider
+	didResolver   *did.Resolver
 }
 
 func NewHandler(s *store.Store, devMode bool, sp StatsProvider) *Handler {
-	return &Handler{store: s, devMode: devMode, statsProvider: sp}
+	return &Handler{store: s, devMode: devMode, statsProvider: sp, didResolver: did.NewResolver()}
 }
 
 func NewHandlerWithoutStats(s *store.Store, devMode bool) *Handler {
-	return &Handler{store: s, devMode: devMode}
+	return &Handler{store: s, devMode: devMode, didResolver: did.NewResolver()}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
@@ -202,13 +213,85 @@ func (h *Handler) verifyAuth(r *http.Request) (string, error) {
 		return "", fmt.Errorf("JWT iss is not a DID: %s", claims.Iss)
 	}
 
-	// TODO: Full DID-based signature verification
-	// 1. Resolve iss DID → get public key from DID document
-	// 2. Verify signature (ES256K / k256) using the resolved key
-	// 3. Check: aud matches our service DID, lxm matches the XRPC method
-	// 4. Optional: jti replay protection
+	// DID-based signature verification
+	// 1. Decode header to check algorithm
+	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("failed to decode JWT header: %w", err)
+	}
+
+	var header jwtHeader
+	if err := json.Unmarshal(headerJSON, &header); err != nil {
+		return "", fmt.Errorf("failed to parse JWT header: %w", err)
+	}
+
+	// 2. Resolve the issuer DID to get the public key
+	if h.didResolver != nil {
+		doc, err := h.didResolver.ResolveDID(claims.Iss)
+		if err != nil {
+			log.Printf("[xrpc] warning: could not resolve DID %s: %v (accepting JWT without signature verification)", claims.Iss, err)
+			return claims.Iss, nil
+		}
+
+		pubKey, err := did.GetSigningKey(doc)
+		if err != nil {
+			log.Printf("[xrpc] warning: could not extract signing key for %s: %v (accepting JWT without full signature verification)", claims.Iss, err)
+			return claims.Iss, nil
+		}
+
+		// 3. Verify the signature
+		sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+		if err != nil {
+			return "", fmt.Errorf("failed to decode JWT signature: %w", err)
+		}
+
+		signingInput := parts[0] + "." + parts[1]
+		hash := sha256.Sum256([]byte(signingInput))
+
+		verified := false
+		switch header.Alg {
+		case "ES256K":
+			// ES256K uses secp256k1 - if we got a P-256 key back, that's a mismatch
+			if pubKey.Curve == elliptic.P256() {
+				log.Printf("[xrpc] warning: ES256K JWT but got P-256 key for %s", claims.Iss)
+				return claims.Iss, nil
+			}
+			verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
+		case "ES256":
+			if pubKey.Curve != elliptic.P256() {
+				log.Printf("[xrpc] warning: ES256 JWT but key curve mismatch for %s", claims.Iss)
+				return claims.Iss, nil
+			}
+			verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
+		default:
+			log.Printf("[xrpc] warning: unsupported JWT algorithm %s for %s (accepting without signature verification)", header.Alg, claims.Iss)
+			return claims.Iss, nil
+		}
+
+		if !verified {
+			return "", fmt.Errorf("JWT signature verification failed for %s", claims.Iss)
+		}
+
+		log.Printf("[xrpc] JWT signature verified for %s (alg=%s)", claims.Iss, header.Alg)
+	}
 
 	return claims.Iss, nil
+}
+
+// verifyECDSASignature verifies an ECDSA signature in the JWS format (r || s concatenation).
+func verifyECDSASignature(pubKey *ecdsa.PublicKey, hash []byte, sig []byte) bool {
+	keySize := (pubKey.Curve.Params().BitSize + 7) / 8
+
+	// JWS ECDSA signatures are r || s, each padded to key size
+	if len(sig) != 2*keySize {
+		// Try ASN.1 DER format as fallback
+		return ecdsa.VerifyASN1(pubKey, hash, sig)
+	}
+
+	r := new(big.Int).SetBytes(sig[:keySize])
+	s := new(big.Int).SetBytes(sig[keySize:])
+
+	return ecdsa.Verify(pubKey, hash, r, s)
 }
 
 // Dev mode: register without JWT

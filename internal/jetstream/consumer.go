@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 )
@@ -76,11 +77,12 @@ type BlockRecord struct {
 }
 
 type Consumer struct {
-	url        string
-	store      *store.Store
-	sender     *push.MultiSender
-	lastCursor atomic.Int64
-	stopCh     chan struct{}
+	url             string
+	store           *store.Store
+	sender          *push.MultiSender
+	profileResolver *profile.Resolver
+	lastCursor      atomic.Int64
+	stopCh          chan struct{}
 
 	// Stats
 	eventsReceived atomic.Int64
@@ -110,12 +112,13 @@ func (c *Consumer) GetStats() Stats {
 	}
 }
 
-func NewConsumer(url string, s *store.Store, sender *push.MultiSender) *Consumer {
+func NewConsumer(url string, s *store.Store, sender *push.MultiSender, profileResolver *profile.Resolver) *Consumer {
 	return &Consumer{
-		url:    url,
-		store:  s,
-		sender: sender,
-		stopCh: make(chan struct{}),
+		url:             url,
+		store:           s,
+		sender:          sender,
+		profileResolver: profileResolver,
+		stopCh:          make(chan struct{}),
 	}
 }
 
@@ -125,6 +128,20 @@ func (c *Consumer) Stop() {
 }
 
 func (c *Consumer) Run() {
+	// Wait until at least one token is registered before connecting to Jetstream
+	for {
+		if c.store.HasRegisteredDIDs() {
+			break
+		}
+		select {
+		case <-c.stopCh:
+			log.Println("[jetstream] consumer stopped before starting")
+			return
+		case <-time.After(5 * time.Second):
+			log.Println("[jetstream] waiting for first token registration...")
+		}
+	}
+
 	collections := []string{
 		"app.bsky.feed.like",
 		"app.bsky.feed.repost",
@@ -133,12 +150,12 @@ func (c *Consumer) Run() {
 		"app.bsky.graph.block",
 	}
 
+	// Note: compress=true uses zstd which requires a zstd decompressor.
+	// gorilla/websocket doesn't support zstd natively. Using uncompressed for now.
+	// Bandwidth: ~5-10 GB/day uncompressed (filtered) vs ~850 MB/day with zstd.
 	params := "?"
-	for i, col := range collections {
-		if i > 0 {
-			params += "&"
-		}
-		params += "wantedCollections=" + col
+	for _, col := range collections {
+		params += "&wantedCollections=" + col
 	}
 
 	backoff := time.Second
@@ -405,14 +422,19 @@ func (c *Consumer) sendNotification(actorDID, targetDID, notifType, subjectURI s
 		"follow":  "New follower",
 	}
 
-	// TODO: Resolve actorDID to a display name via app.bsky.actor.getProfile
+	// Resolve actorDID to a display name for the notification body
+	displayName := actorDID
+	if c.profileResolver != nil {
+		displayName = c.profileResolver.ResolveDisplayName(actorDID)
+	}
+
 	bodies := map[string]string{
-		"like":    "Someone liked your post",
-		"repost":  "Someone reposted your post",
-		"reply":   "Someone replied to your post",
-		"mention": "Someone mentioned you",
-		"quote":   "Someone quoted your post",
-		"follow":  "Someone followed you",
+		"like":    displayName + " liked your post",
+		"repost":  displayName + " reposted your post",
+		"reply":   displayName + " replied to your post",
+		"mention": displayName + " mentioned you",
+		"quote":   displayName + " quoted your post",
+		"follow":  displayName + " followed you",
 	}
 
 	for _, token := range tokens {
