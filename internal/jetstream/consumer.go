@@ -293,7 +293,7 @@ func (c *Consumer) handleCommit(actorDID string, commit *CommitEvent) {
 		}
 	case "app.bsky.feed.post":
 		if commit.Operation == "create" {
-			c.handlePost(actorDID, commit.Record)
+			c.handlePost(actorDID, commit.RKey, commit.Record)
 		}
 	case "app.bsky.graph.follow":
 		if commit.Operation == "create" {
@@ -348,7 +348,7 @@ func (c *Consumer) handleRepost(actorDID string, record json.RawMessage) {
 	c.sendNotification(actorDID, targetDID, "repost", repost.Subject.URI)
 }
 
-func (c *Consumer) handlePost(actorDID string, record json.RawMessage) {
+func (c *Consumer) handlePost(actorDID string, rkey string, record json.RawMessage) {
 	var post PostRecord
 	if err := json.Unmarshal(record, &post); err != nil {
 		return
@@ -370,11 +370,12 @@ func (c *Consumer) handlePost(actorDID string, record json.RawMessage) {
 		}
 	}
 
-	// Mentions
+	// Mentions — include the URI of the mentioning post
+	postURI := fmt.Sprintf("at://%s/app.bsky.feed.post/%s", actorDID, rkey)
 	for _, facet := range post.Facets {
 		for _, feature := range facet.Features {
 			if feature.Type == "app.bsky.richtext.facet#mention" && feature.DID != "" && feature.DID != actorDID {
-				c.sendNotification(actorDID, feature.DID, "mention", "")
+				c.sendNotification(actorDID, feature.DID, "mention", postURI)
 			}
 		}
 	}

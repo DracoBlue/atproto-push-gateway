@@ -179,12 +179,13 @@ This document describes which ATproto record types trigger push notifications, w
     "type": "mention",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social"
+    "actorHandle": "alice.bsky.social",
+    "uri": "at://did:plc:alice/app.bsky.feed.post/3kco5radef"
   }
 }
 ```
 
-Note: No `uri` in the payload because the mention is in the actor's post, not the target's.
+Note: The `uri` is the mentioning post (actor's post), not the target's. This matches how Bluesky's `listNotifications` API returns mention notifications — the `uri` field points to the post containing the mention.
 
 ---
 
