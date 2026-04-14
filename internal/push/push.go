@@ -27,11 +27,12 @@ type ExpoPushSender struct {
 }
 
 type expoMessage struct {
-	To    string            `json:"to"`
-	Title string            `json:"title,omitempty"`
-	Body  string            `json:"body"`
-	Data  map[string]string `json:"data,omitempty"`
-	Sound string            `json:"sound,omitempty"`
+	To             string            `json:"to"`
+	Data           map[string]string `json:"data,omitempty"`
+	Sound          string            `json:"sound,omitempty"`
+	MutableContent bool              `json:"mutableContent,omitempty"`
+	Title          string            `json:"title,omitempty"`
+	Body           string            `json:"body,omitempty"`
 }
 
 func NewExpoPushSender(accessToken string) *ExpoPushSender {
@@ -51,11 +52,12 @@ func truncateToken(token string, maxLen int) string {
 
 func (e *ExpoPushSender) Send(n Notification) error {
 	msg := expoMessage{
-		To:    n.Token,
-		Title: n.Title,
-		Body:  n.Body,
-		Data:  n.Data,
-		Sound: "default",
+		To:             n.Token,
+		Data:           n.Data,
+		Sound:          "default",
+		MutableContent: true,
+		Title:          n.Title,
+		Body:           n.Body,
 	}
 
 	body, err := json.Marshal(msg)
