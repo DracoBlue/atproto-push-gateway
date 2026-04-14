@@ -54,8 +54,8 @@ func (e *ExpoPushSender) Send(n Notification) error {
 	// The NSE overwrites these with localized text.
 	msg := expoMessage{
 		To:             n.Token,
-		Title:          "Kiesel",
-		Body:           "New notification",
+		Title:          " ",
+		Body:           " ",
 		Data:           n.Data,
 		Sound:          "default",
 		MutableContent: true,
