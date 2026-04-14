@@ -26,6 +26,8 @@ type ExpoPushSender struct {
 
 type expoMessage struct {
 	To             string            `json:"to"`
+	Title          string            `json:"title"`
+	Body           string            `json:"body"`
 	Data           map[string]string `json:"data,omitempty"`
 	Sound          string            `json:"sound,omitempty"`
 	MutableContent bool              `json:"mutableContent,omitempty"`
@@ -47,8 +49,13 @@ func truncateToken(token string, maxLen int) string {
 }
 
 func (e *ExpoPushSender) Send(n Notification) error {
+	// Title and body are required placeholders — iOS needs a non-empty alert
+	// in the APNs payload to invoke the Notification Service Extension.
+	// The NSE overwrites these with localized text.
 	msg := expoMessage{
 		To:             n.Token,
+		Title:          "Kiesel",
+		Body:           "New notification",
 		Data:           n.Data,
 		Sound:          "default",
 		MutableContent: true,
