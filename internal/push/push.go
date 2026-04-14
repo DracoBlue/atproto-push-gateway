@@ -11,8 +11,6 @@ import (
 type Notification struct {
 	Token    string
 	Platform string
-	Title    string
-	Body     string
 	Data     map[string]string
 }
 
@@ -31,8 +29,6 @@ type expoMessage struct {
 	Data           map[string]string `json:"data,omitempty"`
 	Sound          string            `json:"sound,omitempty"`
 	MutableContent bool              `json:"mutableContent,omitempty"`
-	Title          string            `json:"title,omitempty"`
-	Body           string            `json:"body,omitempty"`
 }
 
 func NewExpoPushSender(accessToken string) *ExpoPushSender {
@@ -56,8 +52,6 @@ func (e *ExpoPushSender) Send(n Notification) error {
 		Data:           n.Data,
 		Sound:          "default",
 		MutableContent: true,
-		Title:          n.Title,
-		Body:           n.Body,
 	}
 
 	body, err := json.Marshal(msg)
@@ -85,7 +79,7 @@ func (e *ExpoPushSender) Send(n Notification) error {
 		return fmt.Errorf("expo push API returned %d", resp.StatusCode)
 	}
 
-	log.Printf("[push/expo] sent to %s: %s", truncateToken(n.Token, 20), n.Title)
+	log.Printf("[push/expo] sent to %s: %s", truncateToken(n.Token, 20), n.Data["reason"])
 	return nil
 }
 
