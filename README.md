@@ -225,14 +225,21 @@ The gateway maintains a real-time block graph:
 
 ## Roadmap
 
-- [ ] Full inter-service JWT verification (DID resolution + signature check)
+- [x] Full inter-service JWT verification (DID resolution + signature check)
+- [x] Actor display name resolution (profile caching, 1h TTL)
+- [x] like-via-repost / repost-via-repost (via field)
+- [x] verified / unverified (app.bsky.graph.verification)
+- [x] Payload aligned with social-app conventions (reason/uri/subject/recipientDid)
+- [x] zstd dictionary compression for Jetstream
+- [x] mutableContent support for iOS Notification Service Extension
 - [ ] Direct FCM delivery (firebase-admin equivalent)
 - [ ] Direct APNs delivery (HTTP/2 + .p8 key)
-- [ ] Actor display name resolution (profile caching)
-- [ ] Notification preferences (per-type toggles)
+- [ ] Notification preferences (per-type toggles, gateway-side filtering)
+- [ ] Block list support (app.bsky.graph.listblock — resolve list membership)
 - [ ] Rate limiting per DID
 - [ ] Web Push support
 - [ ] Metrics endpoint (Prometheus)
+- [ ] secp256k1 full signature verification (currently graceful degradation)
 
 ## License
 
