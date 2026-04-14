@@ -511,6 +511,58 @@ func (c *Consumer) handleVerificationDelete(verifierDID string, rkey string) {
 	log.Printf("[jetstream] unverified: %s unverified %s (rkey=%s)", verifierDID, subjectDID, rkey)
 }
 
+var reasonTitles = map[string]string{
+	"like":              "New like",
+	"repost":            "New repost",
+	"reply":             "New reply",
+	"mention":           "New mention",
+	"quote":             "New quote",
+	"follow":            "New follower",
+	"like-via-repost":   "New like",
+	"repost-via-repost": "New repost",
+	"verified":          "Verified",
+	"unverified":        "Verification removed",
+}
+
+var reasonBodyTemplates = map[string]string{
+	"like":              "%s liked your post",
+	"repost":            "%s reposted your post",
+	"reply":             "%s replied to your post",
+	"mention":           "%s mentioned you",
+	"quote":             "%s quoted your post",
+	"follow":            "%s followed you",
+	"like-via-repost":   "%s liked a post you reposted",
+	"repost-via-repost": "%s reposted a post you reposted",
+	"verified":          "Your account has been verified",
+	"unverified":        "Your account verification was removed",
+}
+
+func formatNotification(reason, actorDisplayName, actorHandle string) (string, string) {
+	title := reasonTitles[reason]
+	if title == "" {
+		title = "Notification"
+	}
+
+	actorName := actorDisplayName
+	if actorName == "" {
+		actorName = actorHandle
+	}
+	if actorName == "" {
+		actorName = "Someone"
+	}
+
+	template := reasonBodyTemplates[reason]
+	if template == "" {
+		return title, actorName
+	}
+
+	if reason == "verified" || reason == "unverified" {
+		return title, template
+	}
+
+	return title, fmt.Sprintf(template, actorName)
+}
+
 func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subjectURI string) {
 	if !c.store.IsRegistered(targetDID) {
 		return
@@ -536,10 +588,14 @@ func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subj
 		actorDisplayName, actorHandle = c.profileResolver.ResolveProfile(actorDID)
 	}
 
+	title, body := formatNotification(reason, actorDisplayName, actorHandle)
+
 	for _, token := range tokens {
 		n := push.Notification{
 			Token:    token.PushToken,
 			Platform: token.Platform,
+			Title:    title,
+			Body:     body,
 			Data: map[string]string{
 				"reason":           reason,
 				"uri":              recordURI,
