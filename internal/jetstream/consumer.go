@@ -1,6 +1,7 @@
 package jetstream
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,6 +16,9 @@ import (
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 )
+
+//go:embed zstd_dictionary
+var zstdDictionary []byte
 
 type Event struct {
 	DID        string          `json:"did"`
@@ -234,15 +238,15 @@ func (c *Consumer) connect(url string) error {
 	}
 	defer conn.Close()
 
-	// Create zstd decoder for compressed messages
-	decoder, err := zstd.NewReader(nil)
+	// Create zstd decoder with Jetstream dictionary for compressed messages
+	decoder, err := zstd.NewReader(nil, zstd.WithDecoderDicts(zstdDictionary))
 	if err != nil {
 		log.Printf("[jetstream] failed to create zstd decoder: %v", err)
 		return err
 	}
 	defer decoder.Close()
 
-	log.Println("[jetstream] connected (zstd compression enabled)")
+	log.Println("[jetstream] connected (zstd compression enabled, dictionary loaded)")
 
 	for {
 		select {
