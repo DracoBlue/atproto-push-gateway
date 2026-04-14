@@ -239,7 +239,7 @@ The gateway maintains a real-time block graph:
 - [ ] Rate limiting per DID
 - [ ] Web Push support
 - [ ] Metrics endpoint (Prometheus)
-- [ ] secp256k1 full signature verification (currently graceful degradation)
+- [x] secp256k1 full signature verification (via decred/dcrd)
 
 ## License
 
