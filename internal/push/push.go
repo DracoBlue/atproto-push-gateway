@@ -11,6 +11,8 @@ import (
 type Notification struct {
 	Token    string
 	Platform string
+	Title    string
+	Body     string
 	Data     map[string]string
 }
 
@@ -49,13 +51,14 @@ func truncateToken(token string, maxLen int) string {
 }
 
 func (e *ExpoPushSender) Send(n Notification) error {
-	// Title and body are required placeholders — iOS needs a non-empty alert
-	// in the APNs payload to invoke the Notification Service Extension.
-	// The NSE overwrites these with localized text.
+	// Title and body provide a readable English default. Clients with a
+	// Notification Service Extension (iOS) or background handler (Android)
+	// can override these with localized text using the data fields.
+	// mutableContent:true tells iOS to invoke the NSE before display.
 	msg := expoMessage{
 		To:             n.Token,
-		Title:          " ",
-		Body:           " ",
+		Title:          n.Title,
+		Body:           n.Body,
 		Data:           n.Data,
 		Sound:          "default",
 		MutableContent: true,

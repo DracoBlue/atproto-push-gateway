@@ -33,14 +33,51 @@ The gateway:
 
 ## Supported Events
 
-| Event | Notification |
+| Event | Default Title | Default Body |
+|---|---|---|
+| Like | New like | X liked your post |
+| Repost | New repost | X reposted your post |
+| Reply | New reply | X replied to your post |
+| Mention | New mention | X mentioned you |
+| Quote | New quote | X quoted your post |
+| Follow | New follower | X followed you |
+| Like via repost | New like | X liked a post you reposted |
+| Repost via repost | New repost | X reposted a post you reposted |
+| Verified | Verified | Your account has been verified |
+| Unverified | Verification removed | Your account verification was removed |
+
+### Push Payload
+
+The gateway sends English `title` and `body` as defaults, plus structured `data` fields for client-side localization. Clients with an iOS Notification Service Extension or Android background handler can use the `data` fields to format localized text and override the defaults. `mutableContent: true` tells iOS to invoke the NSE before display.
+
+```json
+{
+  "to": "ExponentPushToken[...]",
+  "title": "New like",
+  "body": "Alice liked your post",
+  "sound": "default",
+  "mutableContent": true,
+  "data": {
+    "reason": "like",
+    "uri": "at://did:plc:alice/app.bsky.feed.like/3kco5r7x",
+    "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
+    "recipientDid": "did:plc:bob",
+    "actorDid": "did:plc:alice",
+    "actorDisplayName": "Alice",
+    "actorHandle": "alice.bsky.social"
+  }
+}
+```
+
+| Data Field | Description |
 |---|---|
-| Like | "X liked your post" |
-| Repost | "X reposted your post" |
-| Reply | "X replied to your post" |
-| Mention | "X mentioned you" |
-| Quote | "X quoted your post" |
-| Follow | "X followed you" |
+| `reason` | Notification type (like, repost, reply, mention, quote, follow, like-via-repost, repost-via-repost, verified, unverified) |
+| `uri` | AT-URI of the record that caused the notification |
+| `subject` | AT-URI of the acted-upon post (present for like, repost, reply, quote, like-via-repost, repost-via-repost) |
+| `recipientDid` | DID of the recipient (for multi-account routing) |
+| `actorDid` | DID of the actor who performed the action |
+| `actorDisplayName` | Actor's display name (may be empty) |
+| `actorHandle` | Actor's handle (may be empty) |
 
 ## Quick Start
 
@@ -208,7 +245,7 @@ The PDS forwards `registerPush` calls with an inter-service JWT signed by the us
 1. Decodes the JWT and validates claims (`iss`, `aud`, `lxm`, `exp`)
 2. Resolves the issuer DID (`did:plc` via plc.directory, `did:web` via .well-known/did.json)
 3. Extracts the `#atproto` signing key from the DID document
-4. Verifies the ECDSA signature (ES256 P-256 fully supported, ES256K secp256k1 with graceful degradation)
+4. Verifies the ECDSA signature (ES256 P-256 and ES256K secp256k1 fully supported)
 
 ### Display Name Resolution
 
