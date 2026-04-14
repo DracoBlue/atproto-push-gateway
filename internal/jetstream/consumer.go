@@ -285,11 +285,11 @@ func (c *Consumer) handleCommit(actorDID string, commit *CommitEvent) {
 	switch commit.Collection {
 	case "app.bsky.feed.like":
 		if commit.Operation == "create" {
-			c.handleLike(actorDID, commit.Record)
+			c.handleLike(actorDID, commit.RKey, commit.Record)
 		}
 	case "app.bsky.feed.repost":
 		if commit.Operation == "create" {
-			c.handleRepost(actorDID, commit.Record)
+			c.handleRepost(actorDID, commit.RKey, commit.Record)
 		}
 	case "app.bsky.feed.post":
 		if commit.Operation == "create" {
@@ -297,7 +297,7 @@ func (c *Consumer) handleCommit(actorDID string, commit *CommitEvent) {
 		}
 	case "app.bsky.graph.follow":
 		if commit.Operation == "create" {
-			c.handleFollow(actorDID, commit.Record)
+			c.handleFollow(actorDID, commit.RKey, commit.Record)
 		}
 	case "app.bsky.graph.block":
 		if commit.Operation == "create" {
@@ -320,7 +320,7 @@ func extractDIDFromURI(uri string) string {
 	return parts[0]
 }
 
-func (c *Consumer) handleLike(actorDID string, record json.RawMessage) {
+func (c *Consumer) handleLike(actorDID string, rkey string, record json.RawMessage) {
 	var like LikeRecord
 	if err := json.Unmarshal(record, &like); err != nil {
 		return
@@ -331,10 +331,11 @@ func (c *Consumer) handleLike(actorDID string, record json.RawMessage) {
 		return
 	}
 
-	c.sendNotification(actorDID, targetDID, "like", like.Subject.URI)
+	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.like/%s", actorDID, rkey)
+	c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI)
 }
 
-func (c *Consumer) handleRepost(actorDID string, record json.RawMessage) {
+func (c *Consumer) handleRepost(actorDID string, rkey string, record json.RawMessage) {
 	var repost RepostRecord
 	if err := json.Unmarshal(record, &repost); err != nil {
 		return
@@ -345,7 +346,8 @@ func (c *Consumer) handleRepost(actorDID string, record json.RawMessage) {
 		return
 	}
 
-	c.sendNotification(actorDID, targetDID, "repost", repost.Subject.URI)
+	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.repost/%s", actorDID, rkey)
+	c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI)
 }
 
 func (c *Consumer) handlePost(actorDID string, rkey string, record json.RawMessage) {
@@ -354,11 +356,13 @@ func (c *Consumer) handlePost(actorDID string, rkey string, record json.RawMessa
 		return
 	}
 
+	postURI := fmt.Sprintf("at://%s/app.bsky.feed.post/%s", actorDID, rkey)
+
 	// Reply
 	if post.Reply != nil {
 		targetDID := extractDIDFromURI(post.Reply.Parent.URI)
 		if targetDID != "" && targetDID != actorDID {
-			c.sendNotification(actorDID, targetDID, "reply", post.Reply.Parent.URI)
+			c.sendNotification(actorDID, targetDID, "reply", postURI, post.Reply.Parent.URI)
 		}
 	}
 
@@ -366,22 +370,21 @@ func (c *Consumer) handlePost(actorDID string, rkey string, record json.RawMessa
 	if post.Embed != nil && post.Embed.Type == "app.bsky.embed.record" && post.Embed.Record != nil {
 		targetDID := extractDIDFromURI(post.Embed.Record.URI)
 		if targetDID != "" && targetDID != actorDID {
-			c.sendNotification(actorDID, targetDID, "quote", post.Embed.Record.URI)
+			c.sendNotification(actorDID, targetDID, "quote", postURI, post.Embed.Record.URI)
 		}
 	}
 
-	// Mentions — include the URI of the mentioning post
-	postURI := fmt.Sprintf("at://%s/app.bsky.feed.post/%s", actorDID, rkey)
+	// Mentions
 	for _, facet := range post.Facets {
 		for _, feature := range facet.Features {
 			if feature.Type == "app.bsky.richtext.facet#mention" && feature.DID != "" && feature.DID != actorDID {
-				c.sendNotification(actorDID, feature.DID, "mention", postURI)
+				c.sendNotification(actorDID, feature.DID, "mention", postURI, "")
 			}
 		}
 	}
 }
 
-func (c *Consumer) handleFollow(actorDID string, record json.RawMessage) {
+func (c *Consumer) handleFollow(actorDID string, rkey string, record json.RawMessage) {
 	var follow FollowRecord
 	if err := json.Unmarshal(record, &follow); err != nil {
 		return
@@ -391,7 +394,8 @@ func (c *Consumer) handleFollow(actorDID string, record json.RawMessage) {
 		return
 	}
 
-	c.sendNotification(actorDID, follow.Subject, "follow", "")
+	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.follow/%s", actorDID, rkey)
+	c.sendNotification(actorDID, follow.Subject, "follow", recordURI, "")
 }
 
 func (c *Consumer) handleBlockCreate(actorDID string, rkey string, record json.RawMessage) {
@@ -426,13 +430,13 @@ func (c *Consumer) handleBlockDelete(actorDID string, rkey string) {
 	}
 }
 
-func (c *Consumer) sendNotification(actorDID, targetDID, notifType, subjectURI string) {
+func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subjectURI string) {
 	if !c.store.IsRegistered(targetDID) {
 		return
 	}
 
 	if c.store.IsBlocked(actorDID, targetDID) {
-		log.Printf("[jetstream] suppressed %s notification: blocked (%s -> %s)", notifType, actorDID, targetDID)
+		log.Printf("[jetstream] suppressed %s notification: blocked (%s -> %s)", reason, actorDID, targetDID)
 		return
 	}
 
@@ -456,14 +460,16 @@ func (c *Consumer) sendNotification(actorDID, targetDID, notifType, subjectURI s
 			Token:    token.PushToken,
 			Platform: token.Platform,
 			Data: map[string]string{
-				"type":             notifType,
+				"reason":           reason,
+				"uri":              recordURI,
+				"recipientDid":     targetDID,
 				"actorDid":         actorDID,
 				"actorDisplayName": actorDisplayName,
 				"actorHandle":      actorHandle,
 			},
 		}
 		if subjectURI != "" {
-			n.Data["uri"] = subjectURI
+			n.Data["subject"] = subjectURI
 		}
 
 		if err := c.sender.Send(n); err != nil {

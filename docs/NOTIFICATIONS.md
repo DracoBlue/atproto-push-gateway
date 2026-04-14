@@ -36,11 +36,12 @@ This document describes which ATproto record types trigger push notifications, w
 {
   "to": "<push-token>",
   "data": {
-    "type": "like",
+    "reason": "like",
+    "uri": "at://did:plc:alice/app.bsky.feed.like/3kco5r7xsgb2p",
+    "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social",
-    "uri": "at://did:plc:bob/app.bsky.feed.post/abc123"
+    "actorHandle": "alice.bsky.social"
   }
 }
 ```
@@ -79,11 +80,12 @@ This document describes which ATproto record types trigger push notifications, w
 {
   "to": "<push-token>",
   "data": {
-    "type": "repost",
+    "reason": "repost",
+    "uri": "at://did:plc:alice/app.bsky.feed.repost/3kco5r8abc",
+    "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social",
-    "uri": "at://did:plc:bob/app.bsky.feed.post/abc123"
+    "actorHandle": "alice.bsky.social"
   }
 }
 ```
@@ -129,11 +131,12 @@ This document describes which ATproto record types trigger push notifications, w
 {
   "to": "<push-token>",
   "data": {
-    "type": "reply",
+    "reason": "reply",
+    "uri": "at://did:plc:alice/app.bsky.feed.post/3kco5r9xyz",
+    "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social",
-    "uri": "at://did:plc:bob/app.bsky.feed.post/abc123"
+    "actorHandle": "alice.bsky.social"
   }
 }
 ```
@@ -176,16 +179,16 @@ This document describes which ATproto record types trigger push notifications, w
 {
   "to": "<push-token>",
   "data": {
-    "type": "mention",
+    "reason": "mention",
+    "uri": "at://did:plc:alice/app.bsky.feed.post/3kco5radef",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social",
-    "uri": "at://did:plc:alice/app.bsky.feed.post/3kco5radef"
+    "actorHandle": "alice.bsky.social"
   }
 }
 ```
 
-Note: The `uri` is the mentioning post (actor's post), not the target's. This matches how Bluesky's `listNotifications` API returns mention notifications — the `uri` field points to the post containing the mention.
+Note: For mentions, `uri` is the mentioning post (actor's post) and there is no `subject`. This matches how Bluesky's `listNotifications` API returns mention notifications — the `uri` field points to the post containing the mention.
 
 ---
 
@@ -225,11 +228,12 @@ Note: The `uri` is the mentioning post (actor's post), not the target's. This ma
 {
   "to": "<push-token>",
   "data": {
-    "type": "quote",
+    "reason": "quote",
+    "uri": "at://did:plc:alice/app.bsky.feed.post/3kco5rbghi",
+    "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social",
-    "uri": "at://did:plc:bob/app.bsky.feed.post/abc123"
+    "actorHandle": "alice.bsky.social"
   }
 }
 ```
@@ -265,7 +269,8 @@ Note: The `uri` is the mentioning post (actor's post), not the target's. This ma
 {
   "to": "<push-token>",
   "data": {
-    "type": "follow",
+    "reason": "follow",
+    "uri": "at://did:plc:alice/app.bsky.graph.follow/3kco5rcjkl",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
     "actorHandle": "alice.bsky.social"
@@ -321,11 +326,12 @@ Someone liked a post they discovered through a repost. The reposter gets a notif
 {
   "to": "<push-token>",
   "data": {
-    "type": "like-via-repost",
+    "reason": "like-via-repost",
+    "uri": "at://did:plc:alice/app.bsky.feed.like/3l3qo2vuowo2b",
+    "subject": "at://did:plc:bob/app.bsky.feed.post/postid123",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social",
-    "uri": "at://did:plc:bob/app.bsky.feed.post/postid123"
+    "actorHandle": "alice.bsky.social"
   }
 }
 ```
@@ -376,11 +382,12 @@ Someone reposted a post they discovered through another user's repost. The origi
 {
   "to": "<push-token>",
   "data": {
-    "type": "repost-via-repost",
+    "reason": "repost-via-repost",
+    "uri": "at://did:plc:dave/app.bsky.feed.repost/3l3qo2vuxyz2c",
+    "subject": "at://did:plc:bob/app.bsky.feed.post/postid123",
     "actorDid": "did:plc:dave",
     "actorDisplayName": "Dave",
-    "actorHandle": "dave.bsky.social",
-    "uri": "at://did:plc:bob/app.bsky.feed.post/postid123"
+    "actorHandle": "dave.bsky.social"
   }
 }
 ```
