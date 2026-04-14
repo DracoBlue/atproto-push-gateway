@@ -23,9 +23,10 @@ type Block struct {
 type Store struct {
 	db         *sql.DB
 	mu         sync.RWMutex
-	registeredDIDs map[string]bool
-	blocks         map[string]map[string]bool   // blocker -> blocked -> true
-	blocksByRKey   map[string]map[string]string // blocker -> rkey -> blocked
+	registeredDIDs      map[string]bool
+	blocks              map[string]map[string]bool   // blocker -> blocked -> true
+	blocksByRKey        map[string]map[string]string // blocker -> rkey -> blocked
+	verificationsByRKey map[string]map[string]string // verifier -> rkey -> subject
 }
 
 func New(dbPath string) (*Store, error) {
@@ -51,15 +52,22 @@ func New(dbPath string) (*Store, error) {
 			PRIMARY KEY (blocker_did, blocked_did)
 		);
 		CREATE INDEX IF NOT EXISTS idx_blocks_rkey ON blocks (blocker_did, rkey);
+		CREATE TABLE IF NOT EXISTS verifications (
+			verifier_did TEXT NOT NULL,
+			subject_did TEXT NOT NULL,
+			rkey TEXT NOT NULL,
+			PRIMARY KEY (verifier_did, rkey)
+		);
 	`); err != nil {
 		return nil, err
 	}
 
 	s := &Store{
-		db:             db,
-		registeredDIDs: make(map[string]bool),
-		blocks:         make(map[string]map[string]bool),
-		blocksByRKey:   make(map[string]map[string]string),
+		db:                  db,
+		registeredDIDs:      make(map[string]bool),
+		blocks:              make(map[string]map[string]bool),
+		blocksByRKey:        make(map[string]map[string]string),
+		verificationsByRKey: make(map[string]map[string]string),
 	}
 
 	// loadIntoMemory is called without holding locks because the Store has not
@@ -108,6 +116,23 @@ func (s *Store) loadIntoMemory() error {
 			}
 			s.blocksByRKey[blocker][rkey] = blocked
 		}
+	}
+
+	// Load verifications
+	verifRows, err := s.db.Query("SELECT verifier_did, rkey, subject_did FROM verifications")
+	if err != nil {
+		return err
+	}
+	defer verifRows.Close()
+	for verifRows.Next() {
+		var verifier, rkey, subject string
+		if err := verifRows.Scan(&verifier, &rkey, &subject); err != nil {
+			return err
+		}
+		if s.verificationsByRKey[verifier] == nil {
+			s.verificationsByRKey[verifier] = make(map[string]string)
+		}
+		s.verificationsByRKey[verifier][rkey] = subject
 	}
 
 	return nil
@@ -275,6 +300,56 @@ func (s *Store) GetStats() (tokenCount int, blockCount int, didCount int) {
 	didCount = len(s.registeredDIDs)
 	s.mu.RUnlock()
 	return
+}
+
+func (s *Store) AddVerification(verifierDID, subjectDID, rkey string) error {
+	_, err := s.db.Exec(
+		"INSERT OR REPLACE INTO verifications (verifier_did, subject_did, rkey) VALUES (?, ?, ?)",
+		verifierDID, subjectDID, rkey,
+	)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	if s.verificationsByRKey[verifierDID] == nil {
+		s.verificationsByRKey[verifierDID] = make(map[string]string)
+	}
+	s.verificationsByRKey[verifierDID][rkey] = subjectDID
+	s.mu.Unlock()
+
+	return nil
+}
+
+// RemoveVerificationByRKey removes a verification by verifier DID and rkey.
+// Returns the subject DID if found, or empty string if not found.
+func (s *Store) RemoveVerificationByRKey(verifierDID, rkey string) (string, error) {
+	s.mu.RLock()
+	subjectDID := ""
+	if s.verificationsByRKey[verifierDID] != nil {
+		subjectDID = s.verificationsByRKey[verifierDID][rkey]
+	}
+	s.mu.RUnlock()
+
+	if subjectDID == "" {
+		return "", nil
+	}
+
+	_, err := s.db.Exec(
+		"DELETE FROM verifications WHERE verifier_did = ? AND rkey = ?",
+		verifierDID, rkey,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	s.mu.Lock()
+	if s.verificationsByRKey[verifierDID] != nil {
+		delete(s.verificationsByRKey[verifierDID], rkey)
+	}
+	s.mu.Unlock()
+
+	return subjectDID, nil
 }
 
 func (s *Store) Close() error {

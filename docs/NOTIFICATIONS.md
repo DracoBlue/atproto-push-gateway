@@ -280,11 +280,9 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
 
 ---
 
-## Not Implemented
-
 ### like-via-repost
 
-Someone liked a post they discovered through a repost. The reposter gets a notification ("X liked a post you reposted").
+**Trigger:** `app.bsky.feed.like` record created with `via` field pointing to a repost
 
 **Jetstream Event:**
 ```json
@@ -311,15 +309,9 @@ Someone liked a post they discovered through a repost. The reposter gets a notif
 }
 ```
 
-**How it works:** The `app.bsky.feed.like` record has an optional `via` field (a `strongRef`). When present, it points to the repost through which the user discovered the post. The `subject` always points to the **original post**, not the repost.
+**How it works:** The `app.bsky.feed.like` record has an optional `via` field (a `strongRef`). When present, it points to the repost through which the user discovered the post. The `subject` always points to the **original post**, not the repost. Both the original author (regular `like`) and the reposter (`like-via-repost`) are notified.
 
 **Target DID extraction:** `record.via.uri` → authority part → `did:plc:carol` (the reposter)
-
-**How to implement:**
-1. In `handleLike`, check if `record.via` is present
-2. If yes, extract DID from `via.uri` — that's the reposter who gets the `like-via-repost` notification
-3. The existing `subject.uri` extraction still notifies the original author with a regular `like`
-4. No API call needed — the `via` field contains everything
 
 **Push Payload:**
 ```json
@@ -340,7 +332,7 @@ Someone liked a post they discovered through a repost. The reposter gets a notif
 
 ### repost-via-repost
 
-Someone reposted a post they discovered through another user's repost. The original reposter gets a notification.
+**Trigger:** `app.bsky.feed.repost` record created with `via` field pointing to another repost
 
 **Jetstream Event:**
 ```json
@@ -367,15 +359,9 @@ Someone reposted a post they discovered through another user's repost. The origi
 }
 ```
 
-**How it works:** Same pattern as `like-via-repost`. The `app.bsky.feed.repost` record also has an optional `via` field. The `subject` points to the original post, `via` points to the intermediary repost.
+**How it works:** Same pattern as `like-via-repost`. The `via` field points to the intermediary repost. Both the original author (regular `repost`) and the intermediary reposter (`repost-via-repost`) are notified.
 
 **Target DID extraction:** `record.via.uri` → authority part → `did:plc:carol` (the original reposter)
-
-**How to implement:**
-1. In `handleRepost`, check if `record.via` is present
-2. If yes, extract DID from `via.uri` — that's the reposter who gets the `repost-via-repost` notification
-3. The existing `subject.uri` extraction still notifies the original author with a regular `repost`
-4. No API call needed — the `via` field contains everything
 
 **Push Payload:**
 ```json
@@ -393,6 +379,87 @@ Someone reposted a post they discovered through another user's repost. The origi
 ```
 
 ---
+
+### verified
+
+**Trigger:** `app.bsky.graph.verification` record created
+
+**Jetstream Event:**
+```json
+{
+  "did": "did:plc:verifier-authority",
+  "kind": "commit",
+  "commit": {
+    "operation": "create",
+    "collection": "app.bsky.graph.verification",
+    "rkey": "3l3qo2vvvvv2c",
+    "record": {
+      "$type": "app.bsky.graph.verification",
+      "subject": "did:plc:bob",
+      "handle": "bob.bsky.social",
+      "displayName": "Bob",
+      "createdAt": "2026-04-11T12:00:00.000Z"
+    }
+  }
+}
+```
+
+**Target DID extraction:** `record.subject` → `did:plc:bob`
+
+**Push Payload:**
+```json
+{
+  "to": "<push-token>",
+  "data": {
+    "reason": "verified",
+    "uri": "at://did:plc:verifier-authority/app.bsky.graph.verification/3l3qo2vvvvv2c",
+    "actorDid": "did:plc:verifier-authority",
+    "actorDisplayName": "Bluesky Verification",
+    "actorHandle": "verification.bsky.app"
+  }
+}
+```
+
+Note: The gateway stores verification records (verifier + rkey → subject) in SQLite to support the `unverified` delete case. No trusted verifier validation is performed — all verification create/delete events from Jetstream are processed.
+
+---
+
+### unverified
+
+**Trigger:** `app.bsky.graph.verification` record deleted
+
+**Jetstream Event:**
+```json
+{
+  "did": "did:plc:verifier-authority",
+  "kind": "commit",
+  "commit": {
+    "operation": "delete",
+    "collection": "app.bsky.graph.verification",
+    "rkey": "3l3qo2vvvvv2c"
+  }
+}
+```
+
+**Target DID extraction:** Looked up from stored verification records by verifier DID + rkey.
+
+**Push Payload:**
+```json
+{
+  "to": "<push-token>",
+  "data": {
+    "reason": "unverified",
+    "uri": "at://did:plc:verifier-authority/app.bsky.graph.verification/3l3qo2vvvvv2c",
+    "actorDid": "did:plc:verifier-authority",
+    "actorDisplayName": "Bluesky Verification",
+    "actorHandle": "verification.bsky.app"
+  }
+}
+```
+
+---
+
+## Not Implemented
 
 ### subscribed-post (Bell Icon)
 
@@ -470,55 +537,6 @@ Someone joined Bluesky via your starter pack.
 There is no Jetstream event that says "user X joined via starter pack Y". The signup flow is entirely server-side.
 
 **Conclusion:** Not implementable. The join event is a server-side synthesized notification with no corresponding Jetstream event.
-
----
-
-### verified / unverified
-
-Your account verification status changed.
-
-**Jetstream Event (verified — record created):**
-```json
-{
-  "did": "did:plc:verifier-authority",
-  "kind": "commit",
-  "commit": {
-    "operation": "create",
-    "collection": "app.bsky.graph.verification",
-    "rkey": "3l3qo2vvvvv2c",
-    "record": {
-      "$type": "app.bsky.graph.verification",
-      "subject": "did:plc:bob",
-      "handle": "bob.bsky.social",
-      "displayName": "Bob",
-      "createdAt": "2026-04-11T12:00:00.000Z"
-    }
-  }
-}
-```
-
-**Jetstream Event (unverified — record deleted):**
-```json
-{
-  "did": "did:plc:verifier-authority",
-  "kind": "commit",
-  "commit": {
-    "operation": "delete",
-    "collection": "app.bsky.graph.verification",
-    "rkey": "3l3qo2vvvvv2c"
-  }
-}
-```
-
-**Target DID extraction:** `record.subject` → `did:plc:bob`
-
-**How to implement:**
-1. Subscribe to `app.bsky.graph.verification` collection in Jetstream
-2. On `create`: extract `record.subject` as target DID, send `verified` notification
-3. On `delete`: would need to look up which DID was verified by that rkey (requires storing verification records)
-4. Verification is only valid if issued by a trusted verifier AND current handle/displayName match — the gateway would need a list of trusted verifier DIDs
-
-**Conclusion:** Implementable for `verified` (create events contain the target DID). The `unverified` (delete) case requires storing verification records to map rkey→subject DID. Additionally, the gateway should validate the verifier DID against a trusted list to avoid fake verification notifications.
 
 ---
 

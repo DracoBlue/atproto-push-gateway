@@ -31,18 +31,19 @@ type CommitEvent struct {
 	Record     json.RawMessage `json:"record,omitempty"`
 }
 
+type StrongRef struct {
+	URI string `json:"uri"`
+	CID string `json:"cid"`
+}
+
 type LikeRecord struct {
-	Subject struct {
-		URI string `json:"uri"`
-		CID string `json:"cid"`
-	} `json:"subject"`
+	Subject StrongRef  `json:"subject"`
+	Via     *StrongRef `json:"via,omitempty"`
 }
 
 type RepostRecord struct {
-	Subject struct {
-		URI string `json:"uri"`
-		CID string `json:"cid"`
-	} `json:"subject"`
+	Subject StrongRef  `json:"subject"`
+	Via     *StrongRef `json:"via,omitempty"`
 }
 
 type PostRecord struct {
@@ -75,6 +76,12 @@ type FollowRecord struct {
 
 type BlockRecord struct {
 	Subject string `json:"subject"`
+}
+
+type VerificationRecord struct {
+	Subject     string `json:"subject"`
+	Handle      string `json:"handle"`
+	DisplayName string `json:"displayName"`
 }
 
 type Consumer struct {
@@ -162,6 +169,7 @@ func (c *Consumer) Run() {
 		"app.bsky.feed.post",
 		"app.bsky.graph.follow",
 		"app.bsky.graph.block",
+		"app.bsky.graph.verification",
 	}
 
 	params := "?compress=true"
@@ -305,6 +313,12 @@ func (c *Consumer) handleCommit(actorDID string, commit *CommitEvent) {
 		} else if commit.Operation == "delete" {
 			c.handleBlockDelete(actorDID, commit.RKey)
 		}
+	case "app.bsky.graph.verification":
+		if commit.Operation == "create" {
+			c.handleVerificationCreate(actorDID, commit.RKey, commit.Record)
+		} else if commit.Operation == "delete" {
+			c.handleVerificationDelete(actorDID, commit.RKey)
+		}
 	}
 }
 
@@ -333,6 +347,14 @@ func (c *Consumer) handleLike(actorDID string, rkey string, record json.RawMessa
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.like/%s", actorDID, rkey)
 	c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI)
+
+	// like-via-repost: notify the reposter if discovered via their repost
+	if like.Via != nil {
+		reposterDID := extractDIDFromURI(like.Via.URI)
+		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
+			c.sendNotification(actorDID, reposterDID, "like-via-repost", recordURI, like.Subject.URI)
+		}
+	}
 }
 
 func (c *Consumer) handleRepost(actorDID string, rkey string, record json.RawMessage) {
@@ -348,6 +370,14 @@ func (c *Consumer) handleRepost(actorDID string, rkey string, record json.RawMes
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.repost/%s", actorDID, rkey)
 	c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI)
+
+	// repost-via-repost: notify the original reposter if discovered via their repost
+	if repost.Via != nil {
+		reposterDID := extractDIDFromURI(repost.Via.URI)
+		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
+			c.sendNotification(actorDID, reposterDID, "repost-via-repost", recordURI, repost.Subject.URI)
+		}
+	}
 }
 
 func (c *Consumer) handlePost(actorDID string, rkey string, record json.RawMessage) {
@@ -428,6 +458,53 @@ func (c *Consumer) handleBlockDelete(actorDID string, rkey string) {
 	if blockedDID != "" {
 		log.Printf("[jetstream] unblock: %s unblocked %s (rkey=%s)", actorDID, blockedDID, rkey)
 	}
+}
+
+func (c *Consumer) handleVerificationCreate(verifierDID string, rkey string, record json.RawMessage) {
+	var verification VerificationRecord
+	if err := json.Unmarshal(record, &verification); err != nil {
+		return
+	}
+
+	if verification.Subject == "" {
+		return
+	}
+
+	// Store for later deletion lookup
+	c.store.AddVerification(verifierDID, verification.Subject, rkey)
+
+	// Only notify registered DIDs
+	if !c.store.IsRegistered(verification.Subject) {
+		return
+	}
+
+	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.verification/%s", verifierDID, rkey)
+	c.sendNotification(verifierDID, verification.Subject, "verified", recordURI, "")
+	log.Printf("[jetstream] verified: %s verified %s (rkey=%s)", verifierDID, verification.Subject, rkey)
+}
+
+func (c *Consumer) handleVerificationDelete(verifierDID string, rkey string) {
+	if rkey == "" {
+		return
+	}
+
+	subjectDID, err := c.store.RemoveVerificationByRKey(verifierDID, rkey)
+	if err != nil {
+		log.Printf("[jetstream] error removing verification by rkey: %v", err)
+		return
+	}
+
+	if subjectDID == "" {
+		return
+	}
+
+	if !c.store.IsRegistered(subjectDID) {
+		return
+	}
+
+	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.verification/%s", verifierDID, rkey)
+	c.sendNotification(verifierDID, subjectDID, "unverified", recordURI, "")
+	log.Printf("[jetstream] unverified: %s unverified %s (rkey=%s)", verifierDID, subjectDID, rkey)
 }
 
 func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subjectURI string) {
