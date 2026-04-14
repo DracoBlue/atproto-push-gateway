@@ -6,12 +6,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math/big"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	secp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
 const (
@@ -152,19 +153,6 @@ func parseJWKKey(jwk *JWK) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("unsupported JWK key type: %s", jwk.Kty)
 	}
 
-	var curve elliptic.Curve
-	switch jwk.Crv {
-	case "secp256k1":
-		// secp256k1 is not in Go's standard library.
-		// We use a placeholder that signals the caller to use a specialized library.
-		log.Printf("[did] secp256k1 JWK key detected - full signature verification requires external library")
-		return nil, fmt.Errorf("secp256k1 JWK verification not yet implemented")
-	case "P-256":
-		curve = elliptic.P256()
-	default:
-		return nil, fmt.Errorf("unsupported JWK curve: %s", jwk.Crv)
-	}
-
 	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.X)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode JWK x: %w", err)
@@ -172,6 +160,16 @@ func parseJWKKey(jwk *JWK) (*ecdsa.PublicKey, error) {
 	yBytes, err := base64.RawURLEncoding.DecodeString(jwk.Y)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode JWK y: %w", err)
+	}
+
+	var curve elliptic.Curve
+	switch jwk.Crv {
+	case "secp256k1":
+		curve = secp256k1.S256()
+	case "P-256":
+		curve = elliptic.P256()
+	default:
+		return nil, fmt.Errorf("unsupported JWK curve: %s", jwk.Crv)
 	}
 
 	return &ecdsa.PublicKey{
@@ -213,8 +211,15 @@ func parseMultibaseKey(vmType string, multibase string) (*ecdsa.PublicKey, error
 		if len(compressedKey) != 33 {
 			return nil, fmt.Errorf("expected 33-byte compressed secp256k1 key, got %d bytes", len(compressedKey))
 		}
-		log.Printf("[did] secp256k1 multibase key detected - full signature verification requires secp256k1 library")
-		return nil, fmt.Errorf("secp256k1 multibase key verification not yet fully implemented (key parsed successfully)")
+		pubKey, err := secp256k1.ParsePubKey(compressedKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse compressed secp256k1 key: %w", err)
+		}
+		return &ecdsa.PublicKey{
+			Curve: secp256k1.S256(),
+			X:     pubKey.X(),
+			Y:     pubKey.Y(),
+		}, nil
 	}
 
 	if len(decoded) >= 35 && decoded[0] == 0x80 && decoded[1] == 0x24 {
