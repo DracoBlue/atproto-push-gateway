@@ -234,7 +234,6 @@ The gateway maintains a real-time block graph:
 - [x] mutableContent support for iOS Notification Service Extension
 - [ ] Direct FCM delivery (firebase-admin equivalent)
 - [ ] Direct APNs delivery (HTTP/2 + .p8 key)
-- [ ] Notification preferences (per-type toggles — handled client-side, not in gateway)
 - [ ] Block list support (app.bsky.graph.listblock — resolve list membership)
 - [ ] Rate limiting per DID
 - [ ] Web Push support
