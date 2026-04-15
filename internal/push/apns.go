@@ -18,11 +18,12 @@ import (
 
 // APNsSender sends push notifications directly via Apple Push Notification service.
 type APNsSender struct {
-	keyID  string
-	teamID string
-	key    *ecdsa.PrivateKey
-	client *http.Client
-	topic  string // Bundle ID
+	keyID   string
+	teamID  string
+	key     *ecdsa.PrivateKey
+	client  *http.Client
+	topic   string // Bundle ID
+	sandbox bool   // Use sandbox endpoint (for dev/preview builds)
 
 	mu       sync.Mutex
 	token    string
@@ -30,20 +31,20 @@ type APNsSender struct {
 }
 
 // NewAPNsSender creates a sender from a .p8 key file path.
-func NewAPNsSender(keyPath, keyID, teamID, topic string) (*APNsSender, error) {
+func NewAPNsSender(keyPath, keyID, teamID, topic string, sandbox bool) (*APNsSender, error) {
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read APNs key file: %w", err)
 	}
-	return newAPNsSenderFromBytes(keyData, keyID, teamID, topic)
+	return newAPNsSenderFromBytes(keyData, keyID, teamID, topic, sandbox)
 }
 
-// NewAPNsSenderFromBase64 creates a sender from PEM-encoded key bytes.
-func NewAPNsSenderFromBytes(keyData []byte, keyID, teamID, topic string) (*APNsSender, error) {
-	return newAPNsSenderFromBytes(keyData, keyID, teamID, topic)
+// NewAPNsSenderFromBytes creates a sender from PEM-encoded key bytes.
+func NewAPNsSenderFromBytes(keyData []byte, keyID, teamID, topic string, sandbox bool) (*APNsSender, error) {
+	return newAPNsSenderFromBytes(keyData, keyID, teamID, topic, sandbox)
 }
 
-func newAPNsSenderFromBytes(keyData []byte, keyID, teamID, topic string) (*APNsSender, error) {
+func newAPNsSenderFromBytes(keyData []byte, keyID, teamID, topic string, sandbox bool) (*APNsSender, error) {
 	block, _ := pem.Decode(keyData)
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block from APNs key")
@@ -60,10 +61,11 @@ func newAPNsSenderFromBytes(keyData []byte, keyID, teamID, topic string) (*APNsS
 	}
 
 	return &APNsSender{
-		keyID:  keyID,
-		teamID: teamID,
-		key:    ecKey,
-		topic:  topic,
+		keyID:   keyID,
+		teamID:  teamID,
+		key:     ecKey,
+		topic:   topic,
+		sandbox: sandbox,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -139,7 +141,11 @@ func (a *APNsSender) Send(n Notification) error {
 		return err
 	}
 
-	url := fmt.Sprintf("https://api.push.apple.com/3/device/%s", n.Token)
+	host := "api.push.apple.com"
+	if a.sandbox {
+		host = "api.sandbox.push.apple.com"
+	}
+	url := fmt.Sprintf("https://%s/3/device/%s", host, n.Token)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return err

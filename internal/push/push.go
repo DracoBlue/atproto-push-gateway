@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type Notification struct {
@@ -107,19 +108,23 @@ func NewMultiSender(expoToken string) *MultiSender {
 
 // isExpoToken returns true if the token looks like an Expo Push Token.
 func isExpoToken(token string) bool {
-	return len(token) > 20 && token[:19] == "ExponentPushToken["
+	return strings.HasPrefix(token, "ExponentPushToken[")
 }
 
 func (m *MultiSender) Send(n Notification) error {
 	switch n.Platform {
 	case "ios":
-		// Use direct APNs if configured AND token is a native device token
-		if m.APNs != nil && !isExpoToken(n.Token) {
-			log.Printf("[push] routing iOS to APNs (native token)")
+		if isExpoToken(n.Token) {
+			log.Printf("[push] routing iOS to Expo")
+			return m.Expo.Send(n)
+		}
+		if m.APNs != nil {
+			log.Printf("[push] routing iOS to APNs")
 			return m.APNs.Send(n)
 		}
-		log.Printf("[push] routing iOS to Expo (token=%s)", truncateToken(n.Token, 25))
-		return m.Expo.Send(n)
+		// No APNs configured, can't send native token via Expo
+		log.Printf("[push] skipping iOS native token (APNs not configured)")
+		return nil
 	case "android":
 		return m.Expo.Send(n)
 	case "web":

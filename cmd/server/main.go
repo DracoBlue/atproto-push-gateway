@@ -38,6 +38,7 @@ func main() {
 	apnsKeyID := getEnv("APNS_KEY_ID", "")
 	apnsTeamID := getEnv("APNS_TEAM_ID", "")
 	apnsTopic := getEnv("APNS_TOPIC", "")
+	apnsSandbox := getEnv("APNS_SANDBOX", "") == "true"
 
 	log.Printf("Starting atproto-push-gateway")
 	log.Printf("  DID:       %s", serviceDID)
@@ -72,9 +73,9 @@ func main() {
 					log.Fatalf("Failed to decode APNS_KEY_BASE64: %v", decErr)
 				}
 			}
-			apnsSender, err = push.NewAPNsSenderFromBytes(keyData, apnsKeyID, apnsTeamID, apnsTopic)
+			apnsSender, err = push.NewAPNsSenderFromBytes(keyData, apnsKeyID, apnsTeamID, apnsTopic, apnsSandbox)
 		} else if apnsKeyPath != "" {
-			apnsSender, err = push.NewAPNsSender(apnsKeyPath, apnsKeyID, apnsTeamID, apnsTopic)
+			apnsSender, err = push.NewAPNsSender(apnsKeyPath, apnsKeyID, apnsTeamID, apnsTopic, apnsSandbox)
 		}
 
 		if err != nil {
@@ -82,7 +83,11 @@ func main() {
 		}
 		if apnsSender != nil {
 			sender.APNs = apnsSender
-			log.Printf("  APNs:      enabled (key=%s, team=%s, topic=%s)", apnsKeyID, apnsTeamID, apnsTopic)
+			env := "production"
+		if apnsSandbox {
+			env = "sandbox"
+		}
+		log.Printf("  APNs:      enabled (key=%s, team=%s, topic=%s, env=%s)", apnsKeyID, apnsTeamID, apnsTopic, env)
 		} else {
 			log.Printf("  APNs:      disabled (no key configured)")
 		}
