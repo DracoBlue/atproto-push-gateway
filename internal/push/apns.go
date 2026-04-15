@@ -82,12 +82,12 @@ func (a *APNsSender) getToken() (string, error) {
 
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
+		Issuer:   a.teamID,
 		IssuedAt: jwt.NewNumericDate(now),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	token.Header["kid"] = a.keyID
-	token.Header["iss"] = a.teamID
 
 	signedToken, err := token.SignedString(a.key)
 	if err != nil {
