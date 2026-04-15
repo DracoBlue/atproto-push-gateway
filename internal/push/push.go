@@ -98,6 +98,7 @@ func (e *ExpoPushSender) Send(n Notification) error {
 type MultiSender struct {
 	Expo *ExpoPushSender
 	APNs *APNsSender // nil if not configured
+	FCM  *FCMSender  // nil if not configured
 }
 
 func NewMultiSender(expoToken string) *MultiSender {
@@ -126,7 +127,16 @@ func (m *MultiSender) Send(n Notification) error {
 		log.Printf("[push] skipping iOS native token (APNs not configured)")
 		return nil
 	case "android":
-		return m.Expo.Send(n)
+		if isExpoToken(n.Token) {
+			log.Printf("[push] routing Android to Expo")
+			return m.Expo.Send(n)
+		}
+		if m.FCM != nil {
+			log.Printf("[push] routing Android to FCM")
+			return m.FCM.Send(n)
+		}
+		log.Printf("[push] skipping Android native token (FCM not configured)")
+		return nil
 	case "web":
 		log.Printf("[push] web push not yet supported, token: %s", truncateToken(n.Token, 20))
 		return fmt.Errorf("web push not yet supported")

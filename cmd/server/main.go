@@ -40,6 +40,10 @@ func main() {
 	apnsTopic := getEnv("APNS_TOPIC", "")
 	apnsSandbox := getEnv("APNS_SANDBOX", "") == "true"
 
+	// FCM direct delivery (optional)
+	fcmServiceAccountPath := getEnv("FCM_SERVICE_ACCOUNT_PATH", "")
+	fcmServiceAccountBase64 := getEnv("FCM_SERVICE_ACCOUNT_BASE64", "")
+
 	log.Printf("Starting atproto-push-gateway")
 	log.Printf("  DID:       %s", serviceDID)
 	log.Printf("  Port:      %s", port)
@@ -93,6 +97,33 @@ func main() {
 		}
 	} else {
 		log.Printf("  APNs:      disabled (using Expo for iOS)")
+	}
+
+	// Configure direct FCM if service account is available
+	if fcmServiceAccountBase64 != "" || fcmServiceAccountPath != "" {
+		var fcmSender *push.FCMSender
+		var err error
+
+		if fcmServiceAccountBase64 != "" {
+			saData, decErr := base64.StdEncoding.DecodeString(fcmServiceAccountBase64)
+			if decErr != nil {
+				saData, decErr = base64.RawStdEncoding.DecodeString(fcmServiceAccountBase64)
+				if decErr != nil {
+					log.Fatalf("Failed to decode FCM_SERVICE_ACCOUNT_BASE64: %v", decErr)
+				}
+			}
+			fcmSender, err = push.NewFCMSenderFromBytes(saData)
+		} else {
+			fcmSender, err = push.NewFCMSender(fcmServiceAccountPath)
+		}
+
+		if err != nil {
+			log.Fatalf("Failed to initialize FCM sender: %v", err)
+		}
+		sender.FCM = fcmSender
+		log.Printf("  FCM:       enabled")
+	} else {
+		log.Printf("  FCM:       disabled (using Expo for Android)")
 	}
 
 	// Initialize profile resolver for display names
