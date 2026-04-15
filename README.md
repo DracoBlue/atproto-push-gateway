@@ -299,6 +299,56 @@ The gateway maintains a real-time block graph:
 
 **Note:** Mutes are private in ATproto and not available via Jetstream. Muted accounts may still trigger push notifications.
 
+## Client-Side Localization
+
+The gateway sends English `title` and `body` as defaults. Clients can override these with localized text using the `data` fields before the notification is displayed.
+
+### iOS: Notification Service Extension (NSE)
+
+iOS apps can add a [Notification Service Extension](https://developer.apple.com/documentation/usernotifications/modifying-content-in-newly-delivered-notifications) that intercepts push notifications before display. The NSE reads `reason`, `actorDisplayName`, and `actorHandle` from the payload's `data` dictionary and sets localized `title` and `body`.
+
+Requirements:
+- `mutableContent: true` in the payload (set by the gateway)
+- A non-empty `title` and `body` in the APNs alert (the gateway sends English defaults)
+- An NSE target in your Xcode project
+
+Example NSE logic (Swift):
+
+```swift
+let reason = userInfo["reason"] as? String ?? ""
+let actor = userInfo["actorDisplayName"] as? String ?? "Someone"
+
+switch reason {
+case "like":
+    bestAttempt.title = "Neuer Like"       // German
+    bestAttempt.body = "\(actor) hat deinen Beitrag geliked"
+case "follow":
+    bestAttempt.title = "Neuer Follower"
+    bestAttempt.body = "\(actor) folgt dir jetzt"
+// ... other reasons
+default:
+    break // keep English defaults from gateway
+}
+```
+
+The NSE has ~30 seconds to modify the notification. If it times out, iOS displays the original English text.
+
+### Android: Background Handler
+
+Android apps can use a background message handler (e.g. via `expo-notifications` or Firebase's `onMessageReceived`) to modify notification content before display. The `data` fields are available in the message payload.
+
+The gateway sets `android.notification.channel_id` to the `reason` value, so users can configure per-type notification settings (sound, vibration, importance) in Android system settings.
+
+### Data Fields for Localization
+
+| Field | Example | Use |
+|---|---|---|
+| `reason` | `like` | Determines notification template |
+| `actorDisplayName` | `Alice` | Actor's display name (preferred) |
+| `actorHandle` | `alice.bsky.social` | Actor's handle (fallback if no display name) |
+
+Supported `reason` values: `like`, `repost`, `reply`, `mention`, `quote`, `follow`, `like-via-repost`, `repost-via-repost`, `verified`, `unverified`
+
 ## Roadmap
 
 - [x] Full inter-service JWT verification (DID resolution + signature check)
