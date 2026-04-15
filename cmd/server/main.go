@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"log"
 	"net/http"
 	"os"
@@ -33,6 +34,7 @@ func main() {
 
 	// APNs direct delivery (optional)
 	apnsKeyPath := getEnv("APNS_KEY_PATH", "")
+	apnsKeyBase64 := getEnv("APNS_KEY_BASE64", "")
 	apnsKeyID := getEnv("APNS_KEY_ID", "")
 	apnsTeamID := getEnv("APNS_TEAM_ID", "")
 	apnsTopic := getEnv("APNS_TOPIC", "")
@@ -56,14 +58,30 @@ func main() {
 	// Initialize push sender
 	sender := push.NewMultiSender(expoPushToken)
 
-	// Configure direct APNs if key is available
-	if apnsKeyPath != "" && apnsKeyID != "" && apnsTeamID != "" && apnsTopic != "" {
-		apnsSender, err := push.NewAPNsSender(apnsKeyPath, apnsKeyID, apnsTeamID, apnsTopic)
+	// Configure direct APNs if key is available (file path or base64)
+	if apnsKeyID != "" && apnsTeamID != "" && apnsTopic != "" {
+		var apnsSender *push.APNsSender
+		var err error
+
+		if apnsKeyBase64 != "" {
+			keyData, decErr := base64.StdEncoding.DecodeString(apnsKeyBase64)
+			if decErr != nil {
+				log.Fatalf("Failed to decode APNS_KEY_BASE64: %v", decErr)
+			}
+			apnsSender, err = push.NewAPNsSenderFromBytes(keyData, apnsKeyID, apnsTeamID, apnsTopic)
+		} else if apnsKeyPath != "" {
+			apnsSender, err = push.NewAPNsSender(apnsKeyPath, apnsKeyID, apnsTeamID, apnsTopic)
+		}
+
 		if err != nil {
 			log.Fatalf("Failed to initialize APNs sender: %v", err)
 		}
-		sender.APNs = apnsSender
-		log.Printf("  APNs:      enabled (key=%s, team=%s, topic=%s)", apnsKeyID, apnsTeamID, apnsTopic)
+		if apnsSender != nil {
+			sender.APNs = apnsSender
+			log.Printf("  APNs:      enabled (key=%s, team=%s, topic=%s)", apnsKeyID, apnsTeamID, apnsTopic)
+		} else {
+			log.Printf("  APNs:      disabled (no key configured)")
+		}
 	} else {
 		log.Printf("  APNs:      disabled (using Expo for iOS)")
 	}
