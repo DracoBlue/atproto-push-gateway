@@ -9,4 +9,7 @@ require (
 
 require github.com/klauspost/compress v1.17.11
 
-require github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
+require (
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+)

@@ -31,6 +31,12 @@ func main() {
 	expoPushToken := getEnv("EXPO_PUSH_ACCESS_TOKEN", "")
 	devMode := getEnv("DEV_MODE", "") == "true"
 
+	// APNs direct delivery (optional)
+	apnsKeyPath := getEnv("APNS_KEY_PATH", "")
+	apnsKeyID := getEnv("APNS_KEY_ID", "")
+	apnsTeamID := getEnv("APNS_TEAM_ID", "")
+	apnsTopic := getEnv("APNS_TOPIC", "")
+
 	log.Printf("Starting atproto-push-gateway")
 	log.Printf("  DID:       %s", serviceDID)
 	log.Printf("  Port:      %s", port)
@@ -49,6 +55,18 @@ func main() {
 
 	// Initialize push sender
 	sender := push.NewMultiSender(expoPushToken)
+
+	// Configure direct APNs if key is available
+	if apnsKeyPath != "" && apnsKeyID != "" && apnsTeamID != "" && apnsTopic != "" {
+		apnsSender, err := push.NewAPNsSender(apnsKeyPath, apnsKeyID, apnsTeamID, apnsTopic)
+		if err != nil {
+			log.Fatalf("Failed to initialize APNs sender: %v", err)
+		}
+		sender.APNs = apnsSender
+		log.Printf("  APNs:      enabled (key=%s, team=%s, topic=%s)", apnsKeyID, apnsTeamID, apnsTopic)
+	} else {
+		log.Printf("  APNs:      disabled (using Expo for iOS)")
+	}
 
 	// Initialize profile resolver for display names
 	profileResolver := profile.NewResolver()

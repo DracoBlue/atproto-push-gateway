@@ -93,11 +93,10 @@ func (e *ExpoPushSender) Send(n Notification) error {
 	return nil
 }
 
-// MultiSender routes to the correct sender based on platform
+// MultiSender routes to the correct sender based on platform and token format.
 type MultiSender struct {
 	Expo *ExpoPushSender
-	// FCM  *FCMSender  // TODO
-	// APNs *APNsSender // TODO
+	APNs *APNsSender // nil if not configured
 }
 
 func NewMultiSender(expoToken string) *MultiSender {
@@ -106,13 +105,22 @@ func NewMultiSender(expoToken string) *MultiSender {
 	}
 }
 
+// isExpoToken returns true if the token looks like an Expo Push Token.
+func isExpoToken(token string) bool {
+	return len(token) > 20 && token[:19] == "ExponentPushToken["
+}
+
 func (m *MultiSender) Send(n Notification) error {
 	switch n.Platform {
-	case "ios", "android":
-		// Currently all mobile push is routed through Expo
+	case "ios":
+		// Use direct APNs if configured AND token is a native device token
+		if m.APNs != nil && !isExpoToken(n.Token) {
+			return m.APNs.Send(n)
+		}
+		return m.Expo.Send(n)
+	case "android":
 		return m.Expo.Send(n)
 	case "web":
-		// TODO: implement web push (Web Push API / VAPID)
 		log.Printf("[push] web push not yet supported, token: %s", truncateToken(n.Token, 20))
 		return fmt.Errorf("web push not yet supported")
 	default:
