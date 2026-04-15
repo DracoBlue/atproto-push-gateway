@@ -123,7 +123,39 @@ curl http://localhost:8080/health
 #    a push notification will be sent to the Expo Push Token.
 ```
 
-### Docker
+### Docker (GHCR)
+
+Pre-built images are available on GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/dracoblue/atproto-push-gateway:latest
+```
+
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -v push-data:/data \
+  -e PUSH_GATEWAY_DID=did:web:push.example.org \
+  -e EXPO_PUSH_ACCESS_TOKEN=your-token \
+  ghcr.io/dracoblue/atproto-push-gateway:latest
+```
+
+With direct APNs + FCM:
+
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -v push-data:/data \
+  -e PUSH_GATEWAY_DID=did:web:push.example.org \
+  -e APNS_KEY_BASE64=LS0tLS1CRUdJTi... \
+  -e APNS_KEY_ID=ABC123DEF4 \
+  -e APNS_TEAM_ID=TEAMID1234 \
+  -e APNS_TOPIC=org.example.app \
+  -e FCM_SERVICE_ACCOUNT_BASE64=eyJ0eXBlIjoic2Vydm... \
+  ghcr.io/dracoblue/atproto-push-gateway:latest
+```
+
+### Build from Source
 
 ```bash
 docker build -t atproto-push-gateway .
@@ -131,7 +163,6 @@ docker run -d \
   -p 8080:8080 \
   -v push-data:/data \
   -e DEV_MODE=true \
-  -e EXPO_PUSH_ACCESS_TOKEN=your-token \
   atproto-push-gateway
 ```
 
