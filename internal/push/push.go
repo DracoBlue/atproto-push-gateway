@@ -115,8 +115,10 @@ func (m *MultiSender) Send(n Notification) error {
 	case "ios":
 		// Use direct APNs if configured AND token is a native device token
 		if m.APNs != nil && !isExpoToken(n.Token) {
+			log.Printf("[push] routing iOS to APNs (native token)")
 			return m.APNs.Send(n)
 		}
+		log.Printf("[push] routing iOS to Expo (token=%s)", truncateToken(n.Token, 25))
 		return m.Expo.Send(n)
 	case "android":
 		return m.Expo.Send(n)
