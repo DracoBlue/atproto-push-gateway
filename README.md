@@ -112,7 +112,7 @@ curl -X POST http://localhost:8080/test/register \
     "actorDid": "did:plc:your-did-here",
     "token": "ExponentPushToken[xxxxxx]",
     "platform": "ios",
-    "appId": "app.kiesel.Kiesel"
+    "appId": "org.example.app"
   }'
 
 # 2. Check health
@@ -145,6 +145,14 @@ docker run -d \
 | `JETSTREAM_URL` | `wss://jetstream2.us-east.bsky.network/subscribe` | Jetstream WebSocket URL |
 | `EXPO_PUSH_ACCESS_TOKEN` | (empty) | Expo Push API access token |
 | `DEV_MODE` | (empty) | Set to `true` to enable test endpoints and skip JWT verification |
+| `APNS_KEY_PATH` | (empty) | Path to APNs .p8 key file (for direct APNs delivery) |
+| `APNS_KEY_BASE64` | (empty) | Base64-encoded APNs .p8 key (alternative to file path) |
+| `APNS_KEY_ID` | (empty) | APNs Key ID (from Apple Developer Portal) |
+| `APNS_TEAM_ID` | (empty) | Apple Developer Team ID |
+| `APNS_TOPIC` | (empty) | APNs topic / iOS bundle ID (e.g. `org.example.app`) |
+| `APNS_SANDBOX` | (empty) | Set to `true` for APNs sandbox (dev/preview builds) |
+| `FCM_SERVICE_ACCOUNT_PATH` | (empty) | Path to Firebase service account JSON (for direct FCM delivery) |
+| `FCM_SERVICE_ACCOUNT_BASE64` | (empty) | Base64-encoded service account JSON (alternative to file path) |
 
 ## Production Setup
 
@@ -192,7 +200,7 @@ The service must be reachable via HTTPS (required for DID document resolution an
 - **Language:** Go
 - **Database:** SQLite (single file, no external DB server)
 - **Event Source:** [Jetstream](https://github.com/bluesky-social/jetstream) with zstd compression
-- **Push Delivery:** Expo Push API (FCM/APNs stubs ready for extension)
+- **Push Delivery:** Direct APNs (HTTP/2 + .p8), Direct FCM (v1 API + OAuth2), Expo Push API (fallback)
 - **In-Memory:** Hashmap of registered DIDs + block graph for fast matching
 - **Single process, single container, no external services**
 
@@ -269,8 +277,8 @@ The gateway maintains a real-time block graph:
 - [x] Payload aligned with social-app conventions (reason/uri/subject/recipientDid)
 - [x] zstd dictionary compression for Jetstream
 - [x] mutableContent support for iOS Notification Service Extension
-- [ ] Direct FCM delivery (firebase-admin equivalent)
-- [ ] Direct APNs delivery (HTTP/2 + .p8 key)
+- [x] Direct APNs delivery (HTTP/2 + .p8 key, JWT auth with auto-refresh)
+- [x] Direct FCM delivery (v1 API + OAuth2 service account)
 - [ ] Block list support (app.bsky.graph.listblock — resolve list membership)
 - [ ] Rate limiting per DID
 - [ ] Web Push support
