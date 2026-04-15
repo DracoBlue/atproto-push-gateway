@@ -64,9 +64,13 @@ func main() {
 		var err error
 
 		if apnsKeyBase64 != "" {
+			// Try standard base64 first, then raw (no padding)
 			keyData, decErr := base64.StdEncoding.DecodeString(apnsKeyBase64)
 			if decErr != nil {
-				log.Fatalf("Failed to decode APNS_KEY_BASE64: %v", decErr)
+				keyData, decErr = base64.RawStdEncoding.DecodeString(apnsKeyBase64)
+				if decErr != nil {
+					log.Fatalf("Failed to decode APNS_KEY_BASE64: %v", decErr)
+				}
 			}
 			apnsSender, err = push.NewAPNsSenderFromBytes(keyData, apnsKeyID, apnsTeamID, apnsTopic)
 		} else if apnsKeyPath != "" {
