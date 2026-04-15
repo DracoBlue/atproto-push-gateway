@@ -9,19 +9,19 @@ Bluesky's push infrastructure (`push.bsky.app`) is closed source and does not se
 ## How It Works
 
 ```
-Your App                      PDS (user's)              push.example.org
-    │                            │                            │
-    │─── registerPush ──────────>│                            │
-    │    serviceDid:             │─── XRPC forward ──────────>│
+Your App                        PDS (user's)              push.example.org
+    │                               │                            │
+    │─── registerPush ─────────---─>│                            │
+    │    serviceDid:                │─── XRPC forward ──────────>│
     │    did:web:push.example.org   │    + Service-Auth JWT       │
-    │                            │                            │── store token in SQLite
-    │                            │                            │
-    │                            │                    Jetstream│
-    │                            │                   (WebSocket)
-    │                            │                            │── match event to DID
-    │                            │                            │── check block graph
-    │                            │                            │── construct payload
-    │<────────── Push ───────────┼────────────────────────────│
+    │                               │                            │── store token in SQLite
+    │                               │                            │
+    │                               │                    Jetstream│
+    │                               │                   (WebSocket)
+    │                               │                            │── match event to DID
+    │                               │                            │── check block graph
+    │                               │                            │── construct payload
+    │<────────── Push ─────────---──┼────────────────────────────│
 ```
 
 The gateway:
