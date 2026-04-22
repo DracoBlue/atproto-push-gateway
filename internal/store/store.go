@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -138,7 +139,22 @@ func (s *Store) loadIntoMemory() error {
 	return nil
 }
 
+const maxTokensPerDID = 20
+
 func (s *Store) RegisterToken(actorDID, platform, pushToken, appID string) error {
+	// Enforce per-DID cap. An upsert on the same (actor_did, push_token) does
+	// not grow the count, so count excluding the same token before insert.
+	var existing int
+	if err := s.db.QueryRow(
+		"SELECT COUNT(*) FROM push_tokens WHERE actor_did = ? AND push_token != ?",
+		actorDID, pushToken,
+	).Scan(&existing); err != nil {
+		return err
+	}
+	if existing >= maxTokensPerDID {
+		return fmt.Errorf("DID %s already has %d tokens (cap: %d)", actorDID, existing, maxTokensPerDID)
+	}
+
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO push_tokens (actor_did, platform, push_token, app_id, updated_at)
 		 VALUES (?, ?, ?, ?, datetime('now'))`,

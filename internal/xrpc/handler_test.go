@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -598,5 +599,48 @@ func TestRegisterPush_RejectsOversizedBody(t *testing.T) {
 
 	if w.Code != 400 && w.Code != 413 {
 		t.Errorf("expected 400 or 413 for oversized body, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterPush_RejectsOversizedToken(t *testing.T) {
+	h, _ := newTestHandler(t)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	// 3 KiB token — over 2 KiB cap
+	token := strings.Repeat("a", 3*1024)
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      token, Platform: "ios", AppID: "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Actor-DID", "did:plc:alice")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400 for oversized token, got %d", w.Code)
+	}
+}
+
+func TestRegisterPush_RejectsOversizedAppID(t *testing.T) {
+	h, _ := newTestHandler(t)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	appID := strings.Repeat("a", 512)
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "t", Platform: "ios", AppID: appID,
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Actor-DID", "did:plc:alice")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400 for oversized appId, got %d", w.Code)
 	}
 }

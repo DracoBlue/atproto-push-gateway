@@ -134,6 +134,17 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	const maxTokenLen = 2048
+	const maxAppIDLen = 256
+	if len(req.Token) > maxTokenLen {
+		http.Error(w, `{"error":"invalid_request","message":"token too long"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.AppID) > maxAppIDLen {
+		http.Error(w, `{"error":"invalid_request","message":"appId too long"}`, http.StatusBadRequest)
+		return
+	}
+
 	// Verify inter-service JWT
 	actorDID, err := h.verifyAuth(r)
 	if err != nil {
@@ -172,6 +183,17 @@ func (h *Handler) handleUnregisterPush(w http.ResponseWriter, r *http.Request) {
 
 	if req.ServiceDID != h.serviceDID {
 		http.Error(w, `{"error":"invalid_request","message":"serviceDid does not match this gateway"}`, http.StatusBadRequest)
+		return
+	}
+
+	const maxTokenLen = 2048
+	const maxAppIDLen = 256
+	if len(req.Token) > maxTokenLen {
+		http.Error(w, `{"error":"invalid_request","message":"token too long"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.AppID) > maxAppIDLen {
+		http.Error(w, `{"error":"invalid_request","message":"appId too long"}`, http.StatusBadRequest)
 		return
 	}
 
