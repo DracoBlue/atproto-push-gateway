@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,9 @@ func getEnv(key, fallback string) string {
 func main() {
 	port := getEnv("PUSH_GATEWAY_PORT", "8080")
 	serviceDID := getEnv("PUSH_GATEWAY_DID", "did:web:localhost")
+	if !strings.HasPrefix(serviceDID, "did:web:") {
+		log.Fatalf("PUSH_GATEWAY_DID must start with 'did:web:' (got %q)", serviceDID)
+	}
 	sqlitePath := getEnv("SQLITE_PATH", "./push-gateway.db")
 	jetstreamURL := getEnv("JETSTREAM_URL", "wss://jetstream2.us-east.bsky.network/subscribe")
 	expoPushToken := getEnv("EXPO_PUSH_ACCESS_TOKEN", "")
