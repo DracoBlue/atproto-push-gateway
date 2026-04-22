@@ -644,3 +644,21 @@ func TestRegisterPush_RejectsOversizedAppID(t *testing.T) {
 		t.Errorf("expected 400 for oversized appId, got %d", w.Code)
 	}
 }
+
+func TestMaybeStartBlocksBackfill_OnlyRunsOncePerDID(t *testing.T) {
+	h, _ := newTestHandler(t)
+
+	// First call — claims and runs (may hit the real AppView, which is OK — we ignore).
+	h.maybeStartBlocksBackfill("did:plc:alice")
+	// Second call — should no-op because already marked.
+	h.maybeStartBlocksBackfill("did:plc:alice")
+
+	// Assert the claim semantics: a fresh MarkBlocksBackfilled call returns false.
+	claimed, err := h.store.MarkBlocksBackfilled("did:plc:alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed {
+		t.Error("expected did:plc:alice to already be marked as backfilled")
+	}
+}

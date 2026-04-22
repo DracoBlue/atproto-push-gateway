@@ -160,6 +160,7 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[xrpc] registered token for %s (%s/%s)", actorDID, req.Platform, req.AppID)
+	h.maybeStartBlocksBackfill(actorDID)
 	if h.onTokenRegistered != nil {
 		h.onTokenRegistered()
 	}

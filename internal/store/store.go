@@ -59,6 +59,10 @@ func New(dbPath string) (*Store, error) {
 			rkey TEXT NOT NULL,
 			PRIMARY KEY (verifier_did, rkey)
 		);
+		CREATE TABLE IF NOT EXISTS blocks_backfilled (
+			actor_did TEXT PRIMARY KEY,
+			backfilled_at TEXT DEFAULT (datetime('now'))
+		);
 	`); err != nil {
 		return nil, err
 	}
@@ -248,6 +252,24 @@ func (s *Store) AddBlock(blockerDID, blockedDID, rkey string) error {
 	s.mu.Unlock()
 
 	return nil
+}
+
+// MarkBlocksBackfilled records that this DID's historical blocks have been
+// fetched. Returns true if the row was newly inserted (i.e. this caller
+// should perform the backfill), false if already done.
+func (s *Store) MarkBlocksBackfilled(actorDID string) (bool, error) {
+	res, err := s.db.Exec(
+		"INSERT OR IGNORE INTO blocks_backfilled (actor_did) VALUES (?)",
+		actorDID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // RemoveBlockByRKey looks up a block by blocker DID and rkey, then removes it.
