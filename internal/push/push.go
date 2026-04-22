@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type Notification struct {
@@ -39,7 +40,7 @@ type expoMessage struct {
 func NewExpoPushSender(accessToken string) *ExpoPushSender {
 	return &ExpoPushSender{
 		AccessToken: accessToken,
-		Client:      &http.Client{},
+		Client:      &http.Client{Timeout: 10 * time.Second},
 	}
 }
 

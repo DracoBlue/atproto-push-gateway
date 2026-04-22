@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -58,7 +59,7 @@ func newFCMSenderFromBytes(data []byte) (*FCMSender, error) {
 	return &FCMSender{
 		projectID:   sa.ProjectID,
 		tokenSource: creds.TokenSource,
-		client:      &http.Client{},
+		client:      &http.Client{Timeout: 10 * time.Second},
 	}, nil
 }
 
