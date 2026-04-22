@@ -97,6 +97,11 @@ type VerificationRecord struct {
 	DisplayName string `json:"displayName"`
 }
 
+type dispatchItem struct {
+	actorDID string
+	commit   *CommitEvent
+}
+
 type Consumer struct {
 	url             string
 	store           *store.Store
@@ -105,6 +110,8 @@ type Consumer struct {
 	lastCursor      atomic.Int64
 	stopCh          chan struct{}
 	startCh         chan struct{} // closed when first token registered
+	commitCh        chan dispatchItem
+	eventsDropped   atomic.Int64
 
 	// Stats
 	eventsReceived atomic.Int64
@@ -120,6 +127,7 @@ type Stats struct {
 	PushesSent     int64 `json:"pushesSent"`
 	PushErrors     int64 `json:"pushErrors"`
 	MatchedEvents  int64 `json:"matchedEvents"`
+	EventsDropped  int64 `json:"eventsDropped"`
 	LastCursor     int64 `json:"lastCursor"`
 }
 
@@ -130,6 +138,7 @@ func (c *Consumer) GetStats() Stats {
 		PushesSent:     c.pushesSent.Load(),
 		PushErrors:     c.pushErrors.Load(),
 		MatchedEvents:  c.matchedEvents.Load(),
+		EventsDropped:  c.eventsDropped.Load(),
 		LastCursor:     c.lastCursor.Load(),
 	}
 }
@@ -142,6 +151,7 @@ func NewConsumer(url string, s *store.Store, sender *push.MultiSender, profileRe
 		profileResolver: profileResolver,
 		stopCh:          make(chan struct{}),
 		startCh:         make(chan struct{}),
+		commitCh:        make(chan dispatchItem, 1024),
 	}
 	// If tokens already exist (from SQLite on restart), start immediately
 	if s.HasRegisteredDIDs() {
@@ -174,6 +184,11 @@ func (c *Consumer) Run() {
 	case <-c.stopCh:
 		log.Println("[jetstream] consumer stopped before starting")
 		return
+	}
+
+	const numWorkers = 8
+	for i := 0; i < numWorkers; i++ {
+		go c.dispatchWorker()
 	}
 
 	collections := []string{
@@ -233,6 +248,20 @@ func (c *Consumer) Run() {
 		backoff *= 2
 		if backoff > maxBackoff {
 			backoff = maxBackoff
+		}
+	}
+}
+
+func (c *Consumer) dispatchWorker() {
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case item, ok := <-c.commitCh:
+			if !ok {
+				return
+			}
+			c.handleCommit(item.actorDID, item.commit)
 		}
 	}
 }
@@ -337,7 +366,12 @@ func (c *Consumer) connect(url string) error {
 			continue
 		}
 
-		c.handleCommit(event.DID, event.Commit)
+		select {
+		case c.commitCh <- dispatchItem{actorDID: event.DID, commit: event.Commit}:
+		default:
+			// Queue full → drop this event rather than block the reader.
+			c.eventsDropped.Add(1)
+		}
 	}
 }
 
