@@ -113,6 +113,15 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 	const maxBodyBytes = 64 * 1024 // 64 KiB
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
+	// Verify inter-service JWT before parsing the body so unauthenticated
+	// requests bail in O(JWT-parse) rather than paying for a JSON decode.
+	actorDID, err := h.verifyAuth(r)
+	if err != nil {
+		log.Printf("[xrpc] auth error: %v", err)
+		http.Error(w, `{"error":"auth_required","message":"invalid service auth"}`, http.StatusUnauthorized)
+		return
+	}
+
 	var req RegisterPushRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid_request","message":"invalid JSON"}`, http.StatusBadRequest)
@@ -145,14 +154,6 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify inter-service JWT
-	actorDID, err := h.verifyAuth(r)
-	if err != nil {
-		log.Printf("[xrpc] auth error: %v", err)
-		http.Error(w, `{"error":"auth_required","message":"invalid service auth"}`, http.StatusUnauthorized)
-		return
-	}
-
 	if err := h.store.RegisterToken(actorDID, req.Platform, req.Token, req.AppID); err != nil {
 		log.Printf("[xrpc] register error: %v", err)
 		http.Error(w, `{"error":"internal_error"}`, http.StatusInternalServerError)
@@ -170,6 +171,14 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleUnregisterPush(w http.ResponseWriter, r *http.Request) {
 	const maxBodyBytes = 64 * 1024 // 64 KiB
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+
+	// Verify inter-service JWT before parsing the body so unauthenticated
+	// requests bail in O(JWT-parse) rather than paying for a JSON decode.
+	actorDID, err := h.verifyAuth(r)
+	if err != nil {
+		http.Error(w, `{"error":"auth_required"}`, http.StatusUnauthorized)
+		return
+	}
 
 	var req RegisterPushRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -195,12 +204,6 @@ func (h *Handler) handleUnregisterPush(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.AppID) > maxAppIDLen {
 		http.Error(w, `{"error":"invalid_request","message":"appId too long"}`, http.StatusBadRequest)
-		return
-	}
-
-	actorDID, err := h.verifyAuth(r)
-	if err != nil {
-		http.Error(w, `{"error":"auth_required"}`, http.StatusUnauthorized)
 		return
 	}
 
