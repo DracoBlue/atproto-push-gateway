@@ -2,6 +2,7 @@ package did
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -146,6 +147,54 @@ func TestParseMultibaseKey_RequiresExactLength(t *testing.T) {
 	_, err := parseMultibaseKey("Multikey", encoded)
 	if err == nil {
 		t.Error("expected error for multibase key of wrong total length, got nil")
+	}
+}
+
+func TestResolveDIDWeb_RejectsLoopback(t *testing.T) {
+	r := NewResolver()
+	_, err := r.ResolveDID("did:web:127.0.0.1")
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("expected SSRF-block error, got: %v", err)
+	}
+}
+
+func TestResolveDIDWeb_RejectsLocalhost(t *testing.T) {
+	r := NewResolver()
+	_, err := r.ResolveDID("did:web:localhost")
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("expected SSRF-block error, got: %v", err)
+	}
+}
+
+func TestResolveDIDWeb_RejectsIMDS(t *testing.T) {
+	r := NewResolver()
+	_, err := r.ResolveDID("did:web:169.254.169.254")
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("expected SSRF-block error, got: %v", err)
+	}
+}
+
+func TestResolveDIDWeb_RejectsRFC1918(t *testing.T) {
+	r := NewResolver()
+	_, err := r.ResolveDID("did:web:10.0.0.1")
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("expected SSRF-block error, got: %v", err)
+	}
+}
+
+func TestResolveDIDWeb_RejectsCGNAT(t *testing.T) {
+	r := NewResolver()
+	_, err := r.ResolveDID("did:web:100.64.0.1")
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("expected SSRF-block error for CGNAT, got: %v", err)
+	}
+}
+
+func TestResolveDIDWeb_RejectsZeroSubnet(t *testing.T) {
+	r := NewResolver()
+	_, err := r.ResolveDID("did:web:0.1.2.3")
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("expected SSRF-block error for 0.0.0.0/8, got: %v", err)
 	}
 }
 

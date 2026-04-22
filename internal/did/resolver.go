@@ -1,12 +1,14 @@
 package did
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -56,12 +58,79 @@ type Resolver struct {
 }
 
 func NewResolver() *Resolver {
-	return &Resolver{
-		cache: make(map[string]cacheEntry),
-		client: &http.Client{
-			Timeout: requestTimeout,
+	// Custom transport that blocks resolution to private / loopback /
+	// link-local IP addresses for SSRF protection. Applied on every dial,
+	// including redirects.
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("no IPs resolved for %s", host)
+		}
+		for _, ip := range ips {
+			if isBlockedIP(ip.IP) {
+				return nil, fmt.Errorf("blocked IP %s for host %s (SSRF protection)", ip.IP, host)
+			}
+		}
+		// All returned IPs passed the block check above; dial the first one
+		// explicitly (as an IP literal) to pin the connection and prevent
+		// later DNS rebinding from affecting this dial.
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+	}
+	transport := base
+	client := &http.Client{
+		Timeout:   requestTimeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("too many redirects")
+			}
+			return nil
 		},
 	}
+	return &Resolver{
+		cache:  make(map[string]cacheEntry),
+		client: client,
+	}
+}
+
+// isBlockedIP returns true for addresses the resolver must refuse to connect
+// to: loopback, link-local (incl. AWS/GCP/Azure IMDS at 169.254.169.254),
+// multicast, and RFC1918 private IPv4 plus IPv6 ULA/site-local. Also blocks
+// CGNAT (100.64.0.0/10), deprecated IPv6 site-local (fec0::/10), 0.0.0.0/8,
+// and the broadcast address.
+func isBlockedIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
+		return true
+	}
+	// Broadcast
+	if ip.Equal(net.IPv4bcast) {
+		return true
+	}
+	// CGNAT / RFC 6598: 100.64.0.0/10
+	if v4 := ip.To4(); v4 != nil {
+		if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+			return true
+		}
+		// 0.0.0.0/8 (not just the unspecified singleton)
+		if v4[0] == 0 {
+			return true
+		}
+	}
+	// Deprecated IPv6 site-local: fec0::/10
+	if len(ip) == net.IPv6len && ip[0] == 0xfe && (ip[1]&0xc0) == 0xc0 {
+		return true
+	}
+	return false
 }
 
 // ResolveDID fetches and parses a DID document.
@@ -100,6 +169,9 @@ func (r *Resolver) fetchDIDDocument(did string) (*DIDDocument, error) {
 		domain := strings.TrimPrefix(did, "did:web:")
 		// did:web uses : as path separator, replace with /
 		domain = strings.ReplaceAll(domain, ":", "/")
+		if domain == "localhost" || strings.HasPrefix(domain, "localhost:") || strings.HasPrefix(domain, "localhost/") {
+			return nil, fmt.Errorf("blocked hostname %q (SSRF protection)", domain)
+		}
 		url = "https://" + domain + "/.well-known/did.json"
 	default:
 		return nil, fmt.Errorf("unsupported DID method: %s", did)
