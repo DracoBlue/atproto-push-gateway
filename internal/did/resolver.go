@@ -205,7 +205,7 @@ func parseMultibaseKey(vmType string, multibase string) (*ecdsa.PublicKey, error
 	// Check multicodec varint prefix
 	// secp256k1-pub: 0xe7 0x01 (varint for 0xe7)
 	// p256-pub: 0x80 0x24 (varint for 0x1200)
-	if len(decoded) >= 35 && decoded[0] == 0xe7 && decoded[1] == 0x01 {
+	if len(decoded) == 35 && decoded[0] == 0xe7 && decoded[1] == 0x01 {
 		// secp256k1 compressed public key (33 bytes after 2-byte prefix)
 		compressedKey := decoded[2:]
 		if len(compressedKey) != 33 {
@@ -222,7 +222,7 @@ func parseMultibaseKey(vmType string, multibase string) (*ecdsa.PublicKey, error
 		}, nil
 	}
 
-	if len(decoded) >= 35 && decoded[0] == 0x80 && decoded[1] == 0x24 {
+	if len(decoded) == 35 && decoded[0] == 0x80 && decoded[1] == 0x24 {
 		// P-256 compressed public key (33 bytes after 2-byte prefix)
 		compressedKey := decoded[2:]
 		if len(compressedKey) != 33 {

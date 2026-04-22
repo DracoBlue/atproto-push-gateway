@@ -1,6 +1,7 @@
 package did
 
 import (
+	"math/big"
 	"testing"
 	"time"
 )
@@ -127,5 +128,44 @@ func TestResolveDID_CacheTTL(t *testing.T) {
 	if result.ID != "did:plc:cached" {
 		t.Errorf("expected cached doc, got %s", result.ID)
 	}
+}
+
+func TestParseMultibaseKey_RequiresExactLength(t *testing.T) {
+	// 36 bytes: 2-byte p256-pub prefix + 34-byte "compressed" key. Must be
+	// rejected because total length isn't 35 (the exact size of a valid key).
+	keyBytes := make([]byte, 36)
+	keyBytes[0] = 0x80
+	keyBytes[1] = 0x24
+	keyBytes[2] = 0x02
+	for i := 3; i < 36; i++ {
+		keyBytes[i] = 0xbb
+	}
+
+	encoded := "z" + base58Encode(keyBytes)
+
+	_, err := parseMultibaseKey("Multikey", encoded)
+	if err == nil {
+		t.Error("expected error for multibase key of wrong total length, got nil")
+	}
+}
+
+// base58Encode is a minimal test helper (encodes using the Bitcoin alphabet).
+func base58Encode(b []byte) string {
+	const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+	x := new(big.Int).SetBytes(b)
+	base := big.NewInt(58)
+	mod := new(big.Int)
+	var result []byte
+	for x.Sign() > 0 {
+		x.DivMod(x, base, mod)
+		result = append([]byte{alphabet[mod.Int64()]}, result...)
+	}
+	for _, c := range b {
+		if c != 0 {
+			break
+		}
+		result = append([]byte{'1'}, result...)
+	}
+	return string(result)
 }
 
