@@ -419,3 +419,111 @@ func TestRegisterPush_AcceptsCorrectAud(t *testing.T) {
 		t.Error("expected did:plc:alice to be registered")
 	}
 }
+
+func TestRegisterPush_RejectsNoneAlg(t *testing.T) {
+	key, doc := makeTestKeyAndDoc(t, "did:plc:alice")
+	_ = key
+	r := &mockResolver{docs: map[string]*did.DIDDocument{"did:plc:alice": doc}}
+	h, _ := newProdHandler(t, "did:web:push.example.org", r)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	// alg="none" with no signature
+	jwt := mintTestJWT(t, key, "did:plc:alice", "did:web:push.example.org",
+		"app.bsky.notification.registerPush", time.Now().Add(60*time.Second).Unix(), "none")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "ExponentPushToken[x]", Platform: "ios", AppID: "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 401 {
+		t.Errorf("expected 401 for alg=none, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterPush_RejectsHS256Alg(t *testing.T) {
+	key, doc := makeTestKeyAndDoc(t, "did:plc:alice")
+	_ = key
+	r := &mockResolver{docs: map[string]*did.DIDDocument{"did:plc:alice": doc}}
+	h, _ := newProdHandler(t, "did:web:push.example.org", r)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	jwt := mintTestJWT(t, key, "did:plc:alice", "did:web:push.example.org",
+		"app.bsky.notification.registerPush", time.Now().Add(60*time.Second).Unix(), "HS256")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "ExponentPushToken[x]", Platform: "ios", AppID: "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 401 {
+		t.Errorf("expected 401 for alg=HS256, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterPush_RejectsResolutionFailure(t *testing.T) {
+	key, _ := makeTestKeyAndDoc(t, "did:plc:alice")
+	r := &mockResolver{err: fmt.Errorf("plc.directory down")}
+	h, _ := newProdHandler(t, "did:web:push.example.org", r)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	jwt := mintTestJWT(t, key, "did:plc:alice", "did:web:push.example.org",
+		"app.bsky.notification.registerPush", time.Now().Add(60*time.Second).Unix(), "ES256")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "ExponentPushToken[x]", Platform: "ios", AppID: "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 401 {
+		t.Errorf("expected 401 when DID resolution fails, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterPush_RejectsSignatureMismatch(t *testing.T) {
+	// Sign with key A, advertise key B in DID doc → verification must fail.
+	_, docA := makeTestKeyAndDoc(t, "did:plc:alice")
+	keyB, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &mockResolver{docs: map[string]*did.DIDDocument{"did:plc:alice": docA}}
+	h, _ := newProdHandler(t, "did:web:push.example.org", r)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	jwt := mintTestJWT(t, keyB, "did:plc:alice", "did:web:push.example.org",
+		"app.bsky.notification.registerPush", time.Now().Add(60*time.Second).Unix(), "ES256")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "ExponentPushToken[x]", Platform: "ios", AppID: "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 401 {
+		t.Errorf("expected 401 for bad signature, got %d: %s", w.Code, w.Body.String())
+	}
+}

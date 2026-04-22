@@ -240,56 +240,54 @@ func (h *Handler) verifyAuth(r *http.Request) (string, error) {
 		return "", fmt.Errorf("failed to parse JWT header: %w", err)
 	}
 
-	// 2. Resolve the issuer DID to get the public key
-	if h.didResolver != nil {
-		doc, err := h.didResolver.ResolveDID(claims.Iss)
-		if err != nil {
-			log.Printf("[xrpc] warning: could not resolve DID %s: %v (accepting JWT without signature verification)", claims.Iss, err)
-			return claims.Iss, nil
-		}
-
-		pubKey, err := did.GetSigningKey(doc)
-		if err != nil {
-			log.Printf("[xrpc] warning: could not extract signing key for %s: %v (accepting JWT without full signature verification)", claims.Iss, err)
-			return claims.Iss, nil
-		}
-
-		// 3. Verify the signature
-		sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
-		if err != nil {
-			return "", fmt.Errorf("failed to decode JWT signature: %w", err)
-		}
-
-		signingInput := parts[0] + "." + parts[1]
-		hash := sha256.Sum256([]byte(signingInput))
-
-		verified := false
-		switch header.Alg {
-		case "ES256K":
-			// ES256K uses secp256k1 - if we got a P-256 key back, that's a mismatch
-			if pubKey.Curve == elliptic.P256() {
-				log.Printf("[xrpc] warning: ES256K JWT but got P-256 key for %s", claims.Iss)
-				return claims.Iss, nil
-			}
-			verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
-		case "ES256":
-			if pubKey.Curve != elliptic.P256() {
-				log.Printf("[xrpc] warning: ES256 JWT but key curve mismatch for %s", claims.Iss)
-				return claims.Iss, nil
-			}
-			verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
-		default:
-			log.Printf("[xrpc] warning: unsupported JWT algorithm %s for %s (accepting without signature verification)", header.Alg, claims.Iss)
-			return claims.Iss, nil
-		}
-
-		if !verified {
-			return "", fmt.Errorf("JWT signature verification failed for %s", claims.Iss)
-		}
-
-		log.Printf("[xrpc] JWT signature verified for %s (alg=%s)", claims.Iss, header.Alg)
+	// Enforce explicit algorithm allow-list. ATProto uses ES256/ES256K only.
+	// Rejects "none", "HS256", "RS256", etc. before any key material is loaded.
+	if header.Alg != "ES256" && header.Alg != "ES256K" {
+		return "", fmt.Errorf("unsupported JWT algorithm: %q", header.Alg)
 	}
 
+	// 2. Resolve the issuer DID to get the public key
+	if h.didResolver == nil {
+		return "", fmt.Errorf("no DID resolver configured")
+	}
+	doc, err := h.didResolver.ResolveDID(claims.Iss)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve DID %s: %w", claims.Iss, err)
+	}
+
+	pubKey, err := did.GetSigningKey(doc)
+	if err != nil {
+		return "", fmt.Errorf("could not extract signing key for %s: %w", claims.Iss, err)
+	}
+
+	// 3. Verify the signature
+	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return "", fmt.Errorf("failed to decode JWT signature: %w", err)
+	}
+
+	signingInput := parts[0] + "." + parts[1]
+	hash := sha256.Sum256([]byte(signingInput))
+
+	verified := false
+	switch header.Alg {
+	case "ES256K":
+		if pubKey.Curve == elliptic.P256() {
+			return "", fmt.Errorf("ES256K JWT but got P-256 key for %s", claims.Iss)
+		}
+		verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
+	case "ES256":
+		if pubKey.Curve != elliptic.P256() {
+			return "", fmt.Errorf("ES256 JWT but key curve mismatch for %s", claims.Iss)
+		}
+		verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
+	}
+
+	if !verified {
+		return "", fmt.Errorf("JWT signature verification failed for %s", claims.Iss)
+	}
+
+	log.Printf("[xrpc] JWT signature verified for %s (alg=%s)", claims.Iss, header.Alg)
 	return claims.Iss, nil
 }
 
