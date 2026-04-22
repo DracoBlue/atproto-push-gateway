@@ -2,12 +2,20 @@ package xrpc
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/dracoblue/atproto-push-gateway/internal/did"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 )
 
@@ -19,7 +27,7 @@ func newTestHandler(t *testing.T) (*Handler, *store.Store) {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	h := NewHandlerWithoutStats(s, true) // dev mode
+	h := NewHandlerWithoutStats(s, true, "did:web:push.example.org") // dev mode
 	return h, s
 }
 
@@ -144,7 +152,7 @@ func TestRegisterPushNoAuth(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	s, _ := store.New(dbPath)
 	defer s.Close()
-	h := NewHandlerWithoutStats(s, false) // production mode, no dev mode
+	h := NewHandlerWithoutStats(s, false, "did:web:push.example.org") // production mode
 
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, "did:web:push.example.org")
@@ -246,5 +254,168 @@ func TestMethodNotAllowed(t *testing.T) {
 
 	if w.Code != 405 {
 		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// mockResolver is a DIDResolver that returns a fixed DID document.
+type mockResolver struct {
+	docs map[string]*did.DIDDocument
+	err  error
+}
+
+func (m *mockResolver) ResolveDID(d string) (*did.DIDDocument, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	doc, ok := m.docs[d]
+	if !ok {
+		return nil, fmt.Errorf("unknown DID: %s", d)
+	}
+	return doc, nil
+}
+
+// mintTestJWT signs a JWT (ES256) with the given key, returning the compact form.
+// Fields left zero-valued are omitted from the payload.
+func mintTestJWT(t *testing.T, key *ecdsa.PrivateKey, iss, aud, lxm string, exp int64, alg string) string {
+	t.Helper()
+	if alg == "" {
+		alg = "ES256"
+	}
+	header := map[string]string{"alg": alg, "typ": "JWT"}
+	headerJSON, _ := json.Marshal(header)
+	claims := map[string]interface{}{}
+	if iss != "" {
+		claims["iss"] = iss
+	}
+	if aud != "" {
+		claims["aud"] = aud
+	}
+	if lxm != "" {
+		claims["lxm"] = lxm
+	}
+	if exp != 0 {
+		claims["exp"] = exp
+	}
+	claimsJSON, _ := json.Marshal(claims)
+	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
+	claimsB64 := base64.RawURLEncoding.EncodeToString(claimsJSON)
+	signingInput := headerB64 + "." + claimsB64
+
+	var sigB64 string
+	switch alg {
+	case "none":
+		sigB64 = ""
+	default:
+		hash := sha256.Sum256([]byte(signingInput))
+		r, s, err := ecdsa.Sign(rand.Reader, key, hash[:])
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		keySize := (key.Curve.Params().BitSize + 7) / 8
+		sig := make([]byte, 2*keySize)
+		r.FillBytes(sig[:keySize])
+		s.FillBytes(sig[keySize:])
+		sigB64 = base64.RawURLEncoding.EncodeToString(sig)
+	}
+	return signingInput + "." + sigB64
+}
+
+// makeTestKeyAndDoc generates a P-256 key and a DID document that advertises it.
+func makeTestKeyAndDoc(t *testing.T, didStr string) (*ecdsa.PrivateKey, *did.DIDDocument) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	xB64 := base64.RawURLEncoding.EncodeToString(key.PublicKey.X.FillBytes(make([]byte, 32)))
+	yB64 := base64.RawURLEncoding.EncodeToString(key.PublicKey.Y.FillBytes(make([]byte, 32)))
+	doc := &did.DIDDocument{
+		ID: didStr,
+		VerificationMethod: []did.VerificationMethod{
+			{
+				ID:         didStr + "#atproto",
+				Type:       "JsonWebKey2020",
+				Controller: didStr,
+				PublicKeyJwk: &did.JWK{
+					Kty: "EC",
+					Crv: "P-256",
+					X:   xB64,
+					Y:   yB64,
+				},
+			},
+		},
+	}
+	return key, doc
+}
+
+// newProdHandler creates a non-dev-mode handler with a mock DID resolver.
+func newProdHandler(t *testing.T, serviceDID string, resolver *mockResolver) (*Handler, *store.Store) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := store.New(dbPath)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	h := NewHandlerWithoutStats(s, false, serviceDID) // production mode
+	h.didResolver = resolver
+	return h, s
+}
+
+func TestRegisterPush_RejectsWrongAud(t *testing.T) {
+	key, doc := makeTestKeyAndDoc(t, "did:plc:alice")
+	_ = key
+	r := &mockResolver{docs: map[string]*did.DIDDocument{"did:plc:alice": doc}}
+	h, _ := newProdHandler(t, "did:web:push.example.org", r)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	jwt := mintTestJWT(t, key, "did:plc:alice", "did:web:different.example.org",
+		"app.bsky.notification.registerPush", time.Now().Add(60*time.Second).Unix(), "ES256")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "ExponentPushToken[x]",
+		Platform:   "ios",
+		AppID:      "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 401 {
+		t.Errorf("expected 401 for wrong aud, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRegisterPush_AcceptsCorrectAud(t *testing.T) {
+	key, doc := makeTestKeyAndDoc(t, "did:plc:alice")
+	r := &mockResolver{docs: map[string]*did.DIDDocument{"did:plc:alice": doc}}
+	h, s := newProdHandler(t, "did:web:push.example.org", r)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	jwt := mintTestJWT(t, key, "did:plc:alice", "did:web:push.example.org",
+		"app.bsky.notification.registerPush", time.Now().Add(60*time.Second).Unix(), "ES256")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "ExponentPushToken[x]",
+		Platform:   "ios",
+		AppID:      "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200 with correct aud, got %d: %s", w.Code, w.Body.String())
+	}
+	if !s.IsRegistered("did:plc:alice") {
+		t.Error("expected did:plc:alice to be registered")
 	}
 }

@@ -17,6 +17,12 @@ import (
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 )
 
+// DIDResolver resolves a DID to a DID document. Abstracted as an interface
+// so tests can inject a fake resolver without hitting the network.
+type DIDResolver interface {
+	ResolveDID(did string) (*did.DIDDocument, error)
+}
+
 type jwtHeader struct {
 	Alg string `json:"alg"`
 	Typ string `json:"typ,omitempty"`
@@ -44,17 +50,18 @@ type StatsProvider func() interface{}
 type Handler struct {
 	store              *store.Store
 	devMode            bool
+	serviceDID         string
 	statsProvider      StatsProvider
-	didResolver        *did.Resolver
+	didResolver        DIDResolver
 	onTokenRegistered  func()
 }
 
-func NewHandler(s *store.Store, devMode bool, sp StatsProvider, onTokenRegistered func()) *Handler {
-	return &Handler{store: s, devMode: devMode, statsProvider: sp, didResolver: did.NewResolver(), onTokenRegistered: onTokenRegistered}
+func NewHandler(s *store.Store, devMode bool, serviceDID string, sp StatsProvider, onTokenRegistered func()) *Handler {
+	return &Handler{store: s, devMode: devMode, serviceDID: serviceDID, statsProvider: sp, didResolver: did.NewResolver(), onTokenRegistered: onTokenRegistered}
 }
 
-func NewHandlerWithoutStats(s *store.Store, devMode bool) *Handler {
-	return &Handler{store: s, devMode: devMode, didResolver: did.NewResolver(), onTokenRegistered: nil}
+func NewHandlerWithoutStats(s *store.Store, devMode bool, serviceDID string) *Handler {
+	return &Handler{store: s, devMode: devMode, serviceDID: serviceDID, didResolver: did.NewResolver(), onTokenRegistered: nil}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
@@ -215,6 +222,10 @@ func (h *Handler) verifyAuth(r *http.Request) (string, error) {
 	}
 	if !strings.HasPrefix(claims.Iss, "did:") {
 		return "", fmt.Errorf("JWT iss is not a DID: %s", claims.Iss)
+	}
+
+	if claims.Aud != h.serviceDID {
+		return "", fmt.Errorf("JWT aud mismatch: got %q, want %q", claims.Aud, h.serviceDID)
 	}
 
 	// DID-based signature verification

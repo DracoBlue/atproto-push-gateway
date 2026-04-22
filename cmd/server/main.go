@@ -135,7 +135,7 @@ func main() {
 
 	// Initialize HTTP server
 	mux := http.NewServeMux()
-	handler := xrpc.NewHandler(s, devMode, func() interface{} { return consumer.GetStats() }, consumer.NotifyTokenRegistered)
+	handler := xrpc.NewHandler(s, devMode, serviceDID, func() interface{} { return consumer.GetStats() }, consumer.NotifyTokenRegistered)
 	handler.RegisterRoutes(mux, serviceDID)
 
 	srv := &http.Server{
