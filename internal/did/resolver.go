@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -187,8 +188,10 @@ func (r *Resolver) fetchDIDDocument(did string) (*DIDDocument, error) {
 		return nil, fmt.Errorf("DID resolution for %s returned HTTP %d", did, resp.StatusCode)
 	}
 
+	const maxDocBytes = 256 * 1024 // 256 KiB
+	limited := io.LimitReader(resp.Body, maxDocBytes)
 	var doc DIDDocument
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+	if err := json.NewDecoder(limited).Decode(&doc); err != nil {
 		return nil, fmt.Errorf("failed to decode DID document for %s: %w", did, err)
 	}
 

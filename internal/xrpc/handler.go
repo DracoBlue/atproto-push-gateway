@@ -110,6 +110,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
 }
 
 func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
+	const maxBodyBytes = 64 * 1024 // 64 KiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+
 	var req RegisterPushRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid_request","message":"invalid JSON"}`, http.StatusBadRequest)
@@ -153,6 +156,9 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleUnregisterPush(w http.ResponseWriter, r *http.Request) {
+	const maxBodyBytes = 64 * 1024 // 64 KiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+
 	var req RegisterPushRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)

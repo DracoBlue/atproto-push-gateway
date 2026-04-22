@@ -574,3 +574,29 @@ func TestRegisterPush_RejectsServiceDIDMismatch(t *testing.T) {
 		t.Errorf("expected 400 for serviceDid mismatch, got %d", w.Code)
 	}
 }
+
+func TestRegisterPush_RejectsOversizedBody(t *testing.T) {
+	h, _ := newTestHandler(t)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	// 256 KiB of junk — well over the 64 KiB cap.
+	huge := make([]byte, 256*1024)
+	for i := range huge {
+		huge[i] = 'a'
+	}
+	body := []byte(`{"serviceDid":"did:web:push.example.org","token":"`)
+	body = append(body, huge...)
+	body = append(body, []byte(`","platform":"ios","appId":"app"}`)...)
+
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Actor-DID", "did:plc:alice")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 400 && w.Code != 413 {
+		t.Errorf("expected 400 or 413 for oversized body, got %d: %s", w.Code, w.Body.String())
+	}
+}
