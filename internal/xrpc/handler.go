@@ -121,6 +121,11 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ServiceDID != h.serviceDID {
+		http.Error(w, `{"error":"invalid_request","message":"serviceDid does not match this gateway"}`, http.StatusBadRequest)
+		return
+	}
+
 	if req.Platform != "ios" && req.Platform != "android" && req.Platform != "web" {
 		http.Error(w, `{"error":"invalid_request","message":"invalid platform"}`, http.StatusBadRequest)
 		return
@@ -156,6 +161,11 @@ func (h *Handler) handleUnregisterPush(w http.ResponseWriter, r *http.Request) {
 
 	if req.ServiceDID == "" || req.Token == "" || req.Platform == "" || req.AppID == "" {
 		http.Error(w, `{"error":"invalid_request","message":"missing required fields"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.ServiceDID != h.serviceDID {
+		http.Error(w, `{"error":"invalid_request","message":"serviceDid does not match this gateway"}`, http.StatusBadRequest)
 		return
 	}
 

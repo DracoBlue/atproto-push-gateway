@@ -553,3 +553,24 @@ func TestRegisterPush_RejectsExpTooFarInFuture(t *testing.T) {
 		t.Errorf("expected 401 for exp too far in future, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestRegisterPush_RejectsServiceDIDMismatch(t *testing.T) {
+	h, _ := newTestHandler(t) // dev mode, serviceDID = did:web:push.example.org
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:wrong.example.org", // mismatch
+		Token:      "ExponentPushToken[x]", Platform: "ios", AppID: "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Actor-DID", "did:plc:alice")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400 for serviceDid mismatch, got %d", w.Code)
+	}
+}
