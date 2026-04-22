@@ -3,12 +3,18 @@ package push
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// ErrTokenInvalid indicates the push provider reported the device token as
+// permanently invalid (uninstalled app, revoked, etc.). Callers should
+// remove the token from persistent storage.
+var ErrTokenInvalid = errors.New("push token permanently invalid")
 
 type Notification struct {
 	Token    string

@@ -145,6 +145,9 @@ func (f *FCMSender) Send(n Notification) error {
 			} `json:"error"`
 		}
 		json.NewDecoder(resp.Body).Decode(&errResp)
+		if errResp.Error.Status == "UNREGISTERED" || errResp.Error.Status == "NOT_FOUND" {
+			return fmt.Errorf("%w: FCM %s %s", ErrTokenInvalid, errResp.Error.Status, errResp.Error.Message)
+		}
 		return fmt.Errorf("FCM returned %d: %s (%s)", resp.StatusCode, errResp.Error.Status, errResp.Error.Message)
 	}
 

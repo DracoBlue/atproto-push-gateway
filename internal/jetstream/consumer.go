@@ -3,6 +3,7 @@ package jetstream
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -662,7 +663,14 @@ func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subj
 
 		if err := c.sender.Send(n); err != nil {
 			c.pushErrors.Add(1)
-			log.Printf("[jetstream] push error for %s: %v", targetDID, err)
+			if errors.Is(err, push.ErrTokenInvalid) {
+				log.Printf("[jetstream] removing invalid token for %s: %v", targetDID, err)
+				if uerr := c.store.UnregisterToken(token.ActorDID, token.Platform, token.PushToken, token.AppID); uerr != nil {
+					log.Printf("[jetstream] error removing invalid token: %v", uerr)
+				}
+			} else {
+				log.Printf("[jetstream] push error for %s: %v", targetDID, err)
+			}
 		} else {
 			c.pushesSent.Add(1)
 		}
