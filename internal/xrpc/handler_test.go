@@ -527,3 +527,29 @@ func TestRegisterPush_RejectsSignatureMismatch(t *testing.T) {
 		t.Errorf("expected 401 for bad signature, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestRegisterPush_RejectsExpTooFarInFuture(t *testing.T) {
+	key, doc := makeTestKeyAndDoc(t, "did:plc:alice")
+	r := &mockResolver{docs: map[string]*did.DIDDocument{"did:plc:alice": doc}}
+	h, _ := newProdHandler(t, "did:web:push.example.org", r)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	// exp is 10 minutes in the future — exceeds 5-minute cap
+	jwt := mintTestJWT(t, key, "did:plc:alice", "did:web:push.example.org",
+		"app.bsky.notification.registerPush", time.Now().Add(10*time.Minute).Unix(), "ES256")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "ExponentPushToken[x]", Platform: "ios", AppID: "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/app.bsky.notification.registerPush", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 401 {
+		t.Errorf("expected 401 for exp too far in future, got %d: %s", w.Code, w.Body.String())
+	}
+}

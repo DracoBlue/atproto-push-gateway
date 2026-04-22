@@ -212,8 +212,13 @@ func (h *Handler) verifyAuth(r *http.Request) (string, error) {
 	if claims.Exp == 0 {
 		return "", fmt.Errorf("JWT missing exp claim")
 	}
-	if time.Now().Unix() > claims.Exp {
+	now := time.Now().Unix()
+	if now > claims.Exp {
 		return "", fmt.Errorf("JWT expired")
+	}
+	const maxLifetimeSeconds = 300 // 5 minutes
+	if claims.Exp-now > maxLifetimeSeconds {
+		return "", fmt.Errorf("JWT exp too far in future (%ds > %ds)", claims.Exp-now, maxLifetimeSeconds)
 	}
 
 	// Check issuer is present and looks like a DID
