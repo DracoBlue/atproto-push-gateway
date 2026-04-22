@@ -69,7 +69,9 @@ func NewResolver() *Resolver {
 		if err != nil {
 			return nil, err
 		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		ips, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
 		if err != nil {
 			return nil, err
 		}
