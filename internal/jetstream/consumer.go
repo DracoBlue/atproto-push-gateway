@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,13 @@ import (
 
 //go:embed zstd_dictionary
 var zstdDictionary []byte
+
+const (
+	wsReadTimeout     = 60 * time.Second
+	wsWriteTimeout    = 10 * time.Second
+	wsPingInterval    = 20 * time.Second
+	wsMaxMessageBytes = 1 << 20 // 1 MiB per frame
+)
 
 type Event struct {
 	DID        string          `json:"did"`
@@ -237,6 +245,45 @@ func (c *Consumer) connect(url string) error {
 		return err
 	}
 	defer conn.Close()
+
+	conn.SetReadLimit(wsMaxMessageBytes)
+	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	})
+
+	// Ping loop in the background to keep the connection alive. Exits when
+	// the connection is closed or the consumer is stopped. We wait for it
+	// to exit before returning from connect() so the pinger can't race with
+	// conn.Close(), which gorilla documents as safe-to-call-concurrently but
+	// we'd still rather have a clean shutdown with no dangling WriteMessage.
+	pingStop := make(chan struct{})
+	var pingWG sync.WaitGroup
+	pingWG.Add(1)
+	defer func() {
+		close(pingStop)
+		pingWG.Wait()
+	}()
+	go func() {
+		defer pingWG.Done()
+		ticker := time.NewTicker(wsPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					log.Printf("[jetstream] ping error: %v", err)
+					_ = conn.Close()
+					return
+				}
+			case <-pingStop:
+				return
+			case <-c.stopCh:
+				return
+			}
+		}
+	}()
 
 	// Create zstd decoder with Jetstream dictionary for compressed messages
 	decoder, err := zstd.NewReader(nil, zstd.WithDecoderDicts(zstdDictionary))
