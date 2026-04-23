@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"sync"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -57,6 +58,10 @@ func New(dbPath string) (*Store, error) {
 			subject_did TEXT NOT NULL,
 			rkey TEXT NOT NULL,
 			PRIMARY KEY (verifier_did, rkey)
+		);
+		CREATE TABLE IF NOT EXISTS blocks_backfilled (
+			actor_did TEXT PRIMARY KEY,
+			backfilled_at TEXT DEFAULT (datetime('now'))
 		);
 	`); err != nil {
 		return nil, err
@@ -138,13 +143,40 @@ func (s *Store) loadIntoMemory() error {
 	return nil
 }
 
+const maxTokensPerDID = 20
+
 func (s *Store) RegisterToken(actorDID, platform, pushToken, appID string) error {
-	_, err := s.db.Exec(
+	// Enforce per-DID cap. An upsert on the same (actor_did, push_token) does
+	// not grow the count, so count excluding the same token before insert.
+	// Wrap the count+insert pair in a transaction so concurrent registrations
+	// for the same DID can't each see existing < cap and all insert, which
+	// would overshoot the cap by up to N-1.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var existing int
+	if err := tx.QueryRow(
+		"SELECT COUNT(*) FROM push_tokens WHERE actor_did = ? AND push_token != ?",
+		actorDID, pushToken,
+	).Scan(&existing); err != nil {
+		return err
+	}
+	if existing >= maxTokensPerDID {
+		return fmt.Errorf("DID %s already has %d tokens (cap: %d)", actorDID, existing, maxTokensPerDID)
+	}
+
+	if _, err := tx.Exec(
 		`INSERT OR REPLACE INTO push_tokens (actor_did, platform, push_token, app_id, updated_at)
 		 VALUES (?, ?, ?, ?, datetime('now'))`,
 		actorDID, platform, pushToken, appID,
-	)
-	if err != nil {
+	); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 
@@ -232,6 +264,24 @@ func (s *Store) AddBlock(blockerDID, blockedDID, rkey string) error {
 	s.mu.Unlock()
 
 	return nil
+}
+
+// MarkBlocksBackfilled records that this DID's historical blocks have been
+// fetched. Returns true if the row was newly inserted (i.e. this caller
+// should perform the backfill), false if already done.
+func (s *Store) MarkBlocksBackfilled(actorDID string) (bool, error) {
+	res, err := s.db.Exec(
+		"INSERT OR IGNORE INTO blocks_backfilled (actor_did) VALUES (?)",
+		actorDID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // RemoveBlockByRKey looks up a block by blocker DID and rkey, then removes it.

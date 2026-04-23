@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -58,7 +59,7 @@ func newFCMSenderFromBytes(data []byte) (*FCMSender, error) {
 	return &FCMSender{
 		projectID:   sa.ProjectID,
 		tokenSource: creds.TokenSource,
-		client:      &http.Client{},
+		client:      &http.Client{Timeout: 10 * time.Second},
 	}, nil
 }
 
@@ -144,6 +145,9 @@ func (f *FCMSender) Send(n Notification) error {
 			} `json:"error"`
 		}
 		json.NewDecoder(resp.Body).Decode(&errResp)
+		if errResp.Error.Status == "UNREGISTERED" || errResp.Error.Status == "NOT_FOUND" {
+			return fmt.Errorf("%w: FCM %s %s", ErrTokenInvalid, errResp.Error.Status, errResp.Error.Message)
+		}
 		return fmt.Errorf("FCM returned %d: %s (%s)", resp.StatusCode, errResp.Error.Status, errResp.Error.Message)
 	}
 

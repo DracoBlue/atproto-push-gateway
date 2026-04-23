@@ -17,6 +17,12 @@ import (
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 )
 
+// DIDResolver resolves a DID to a DID document. Abstracted as an interface
+// so tests can inject a fake resolver without hitting the network.
+type DIDResolver interface {
+	ResolveDID(did string) (*did.DIDDocument, error)
+}
+
 type jwtHeader struct {
 	Alg string `json:"alg"`
 	Typ string `json:"typ,omitempty"`
@@ -44,17 +50,18 @@ type StatsProvider func() interface{}
 type Handler struct {
 	store              *store.Store
 	devMode            bool
+	serviceDID         string
 	statsProvider      StatsProvider
-	didResolver        *did.Resolver
+	didResolver        DIDResolver
 	onTokenRegistered  func()
 }
 
-func NewHandler(s *store.Store, devMode bool, sp StatsProvider, onTokenRegistered func()) *Handler {
-	return &Handler{store: s, devMode: devMode, statsProvider: sp, didResolver: did.NewResolver(), onTokenRegistered: onTokenRegistered}
+func NewHandler(s *store.Store, devMode bool, serviceDID string, sp StatsProvider, onTokenRegistered func()) *Handler {
+	return &Handler{store: s, devMode: devMode, serviceDID: serviceDID, statsProvider: sp, didResolver: did.NewResolver(), onTokenRegistered: onTokenRegistered}
 }
 
-func NewHandlerWithoutStats(s *store.Store, devMode bool) *Handler {
-	return &Handler{store: s, devMode: devMode, didResolver: did.NewResolver(), onTokenRegistered: nil}
+func NewHandlerWithoutStats(s *store.Store, devMode bool, serviceDID string) *Handler {
+	return &Handler{store: s, devMode: devMode, serviceDID: serviceDID, didResolver: did.NewResolver(), onTokenRegistered: nil}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
@@ -103,6 +110,18 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
 }
 
 func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
+	const maxBodyBytes = 64 * 1024 // 64 KiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+
+	// Verify inter-service JWT before parsing the body so unauthenticated
+	// requests bail in O(JWT-parse) rather than paying for a JSON decode.
+	actorDID, err := h.verifyAuth(r)
+	if err != nil {
+		log.Printf("[xrpc] auth error: %v", err)
+		http.Error(w, `{"error":"auth_required","message":"invalid service auth"}`, http.StatusUnauthorized)
+		return
+	}
+
 	var req RegisterPushRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid_request","message":"invalid JSON"}`, http.StatusBadRequest)
@@ -114,16 +133,24 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ServiceDID != h.serviceDID {
+		http.Error(w, `{"error":"invalid_request","message":"serviceDid does not match this gateway"}`, http.StatusBadRequest)
+		return
+	}
+
 	if req.Platform != "ios" && req.Platform != "android" && req.Platform != "web" {
 		http.Error(w, `{"error":"invalid_request","message":"invalid platform"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Verify inter-service JWT
-	actorDID, err := h.verifyAuth(r)
-	if err != nil {
-		log.Printf("[xrpc] auth error: %v", err)
-		http.Error(w, `{"error":"auth_required","message":"invalid service auth"}`, http.StatusUnauthorized)
+	const maxTokenLen = 2048
+	const maxAppIDLen = 256
+	if len(req.Token) > maxTokenLen {
+		http.Error(w, `{"error":"invalid_request","message":"token too long"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.AppID) > maxAppIDLen {
+		http.Error(w, `{"error":"invalid_request","message":"appId too long"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -134,6 +161,7 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[xrpc] registered token for %s (%s/%s)", actorDID, req.Platform, req.AppID)
+	h.maybeStartBlocksBackfill(actorDID)
 	if h.onTokenRegistered != nil {
 		h.onTokenRegistered()
 	}
@@ -141,6 +169,17 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleUnregisterPush(w http.ResponseWriter, r *http.Request) {
+	const maxBodyBytes = 64 * 1024 // 64 KiB
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+
+	// Verify inter-service JWT before parsing the body so unauthenticated
+	// requests bail in O(JWT-parse) rather than paying for a JSON decode.
+	actorDID, err := h.verifyAuth(r)
+	if err != nil {
+		http.Error(w, `{"error":"auth_required"}`, http.StatusUnauthorized)
+		return
+	}
+
 	var req RegisterPushRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
@@ -152,9 +191,19 @@ func (h *Handler) handleUnregisterPush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorDID, err := h.verifyAuth(r)
-	if err != nil {
-		http.Error(w, `{"error":"auth_required"}`, http.StatusUnauthorized)
+	if req.ServiceDID != h.serviceDID {
+		http.Error(w, `{"error":"invalid_request","message":"serviceDid does not match this gateway"}`, http.StatusBadRequest)
+		return
+	}
+
+	const maxTokenLen = 2048
+	const maxAppIDLen = 256
+	if len(req.Token) > maxTokenLen {
+		http.Error(w, `{"error":"invalid_request","message":"token too long"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.AppID) > maxAppIDLen {
+		http.Error(w, `{"error":"invalid_request","message":"appId too long"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -205,8 +254,13 @@ func (h *Handler) verifyAuth(r *http.Request) (string, error) {
 	if claims.Exp == 0 {
 		return "", fmt.Errorf("JWT missing exp claim")
 	}
-	if time.Now().Unix() > claims.Exp {
+	now := time.Now().Unix()
+	if now > claims.Exp {
 		return "", fmt.Errorf("JWT expired")
+	}
+	const maxLifetimeSeconds = 300 // 5 minutes
+	if claims.Exp-now > maxLifetimeSeconds {
+		return "", fmt.Errorf("JWT exp too far in future (%ds > %ds)", claims.Exp-now, maxLifetimeSeconds)
 	}
 
 	// Check issuer is present and looks like a DID
@@ -215,6 +269,10 @@ func (h *Handler) verifyAuth(r *http.Request) (string, error) {
 	}
 	if !strings.HasPrefix(claims.Iss, "did:") {
 		return "", fmt.Errorf("JWT iss is not a DID: %s", claims.Iss)
+	}
+
+	if claims.Aud != h.serviceDID {
+		return "", fmt.Errorf("JWT aud mismatch: got %q, want %q", claims.Aud, h.serviceDID)
 	}
 
 	// DID-based signature verification
@@ -229,56 +287,54 @@ func (h *Handler) verifyAuth(r *http.Request) (string, error) {
 		return "", fmt.Errorf("failed to parse JWT header: %w", err)
 	}
 
-	// 2. Resolve the issuer DID to get the public key
-	if h.didResolver != nil {
-		doc, err := h.didResolver.ResolveDID(claims.Iss)
-		if err != nil {
-			log.Printf("[xrpc] warning: could not resolve DID %s: %v (accepting JWT without signature verification)", claims.Iss, err)
-			return claims.Iss, nil
-		}
-
-		pubKey, err := did.GetSigningKey(doc)
-		if err != nil {
-			log.Printf("[xrpc] warning: could not extract signing key for %s: %v (accepting JWT without full signature verification)", claims.Iss, err)
-			return claims.Iss, nil
-		}
-
-		// 3. Verify the signature
-		sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
-		if err != nil {
-			return "", fmt.Errorf("failed to decode JWT signature: %w", err)
-		}
-
-		signingInput := parts[0] + "." + parts[1]
-		hash := sha256.Sum256([]byte(signingInput))
-
-		verified := false
-		switch header.Alg {
-		case "ES256K":
-			// ES256K uses secp256k1 - if we got a P-256 key back, that's a mismatch
-			if pubKey.Curve == elliptic.P256() {
-				log.Printf("[xrpc] warning: ES256K JWT but got P-256 key for %s", claims.Iss)
-				return claims.Iss, nil
-			}
-			verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
-		case "ES256":
-			if pubKey.Curve != elliptic.P256() {
-				log.Printf("[xrpc] warning: ES256 JWT but key curve mismatch for %s", claims.Iss)
-				return claims.Iss, nil
-			}
-			verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
-		default:
-			log.Printf("[xrpc] warning: unsupported JWT algorithm %s for %s (accepting without signature verification)", header.Alg, claims.Iss)
-			return claims.Iss, nil
-		}
-
-		if !verified {
-			return "", fmt.Errorf("JWT signature verification failed for %s", claims.Iss)
-		}
-
-		log.Printf("[xrpc] JWT signature verified for %s (alg=%s)", claims.Iss, header.Alg)
+	// Enforce explicit algorithm allow-list. ATProto uses ES256/ES256K only.
+	// Rejects "none", "HS256", "RS256", etc. before any key material is loaded.
+	if header.Alg != "ES256" && header.Alg != "ES256K" {
+		return "", fmt.Errorf("unsupported JWT algorithm: %q", header.Alg)
 	}
 
+	// 2. Resolve the issuer DID to get the public key
+	if h.didResolver == nil {
+		return "", fmt.Errorf("no DID resolver configured")
+	}
+	doc, err := h.didResolver.ResolveDID(claims.Iss)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve DID %s: %w", claims.Iss, err)
+	}
+
+	pubKey, err := did.GetSigningKey(doc)
+	if err != nil {
+		return "", fmt.Errorf("could not extract signing key for %s: %w", claims.Iss, err)
+	}
+
+	// 3. Verify the signature
+	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return "", fmt.Errorf("failed to decode JWT signature: %w", err)
+	}
+
+	signingInput := parts[0] + "." + parts[1]
+	hash := sha256.Sum256([]byte(signingInput))
+
+	verified := false
+	switch header.Alg {
+	case "ES256K":
+		if pubKey.Curve == elliptic.P256() {
+			return "", fmt.Errorf("ES256K JWT but got P-256 key for %s", claims.Iss)
+		}
+		verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
+	case "ES256":
+		if pubKey.Curve != elliptic.P256() {
+			return "", fmt.Errorf("ES256 JWT but key curve mismatch for %s", claims.Iss)
+		}
+		verified = verifyECDSASignature(pubKey, hash[:], sigBytes)
+	}
+
+	if !verified {
+		return "", fmt.Errorf("JWT signature verification failed for %s", claims.Iss)
+	}
+
+	log.Printf("[xrpc] JWT signature verified for %s (alg=%s)", claims.Iss, header.Alg)
 	return claims.Iss, nil
 }
 

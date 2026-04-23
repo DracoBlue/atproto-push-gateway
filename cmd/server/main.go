@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,10 +28,14 @@ func getEnv(key, fallback string) string {
 func main() {
 	port := getEnv("PUSH_GATEWAY_PORT", "8080")
 	serviceDID := getEnv("PUSH_GATEWAY_DID", "did:web:localhost")
+	if !strings.HasPrefix(serviceDID, "did:web:") {
+		log.Fatalf("PUSH_GATEWAY_DID must start with 'did:web:' (got %q)", serviceDID)
+	}
 	sqlitePath := getEnv("SQLITE_PATH", "./push-gateway.db")
 	jetstreamURL := getEnv("JETSTREAM_URL", "wss://jetstream2.us-east.bsky.network/subscribe")
 	expoPushToken := getEnv("EXPO_PUSH_ACCESS_TOKEN", "")
 	devMode := getEnv("DEV_MODE", "") == "true"
+	devModeAllowPublic := getEnv("DEV_MODE_ALLOW_PUBLIC", "") == "true"
 
 	// APNs direct delivery (optional)
 	apnsKeyPath := getEnv("APNS_KEY_PATH", "")
@@ -50,6 +55,14 @@ func main() {
 	log.Printf("  SQLite:    %s", sqlitePath)
 	log.Printf("  Jetstream: %s", jetstreamURL)
 	log.Printf("  Dev mode:  %v", devMode)
+
+	if devMode {
+		log.Println("")
+		log.Println("!!! DEV_MODE ENABLED — do NOT run on a public network !!!")
+		log.Println("!!! /test/register accepts unauthenticated requests !!!")
+		log.Println("!!! X-Actor-DID header bypasses JWT verification    !!!")
+		log.Println("")
+	}
 
 	// Initialize store
 	s, err := store.New(sqlitePath)
@@ -135,17 +148,28 @@ func main() {
 
 	// Initialize HTTP server
 	mux := http.NewServeMux()
-	handler := xrpc.NewHandler(s, devMode, func() interface{} { return consumer.GetStats() }, consumer.NotifyTokenRegistered)
+	handler := xrpc.NewHandler(s, devMode, serviceDID, func() interface{} { return consumer.GetStats() }, consumer.NotifyTokenRegistered)
 	handler.RegisterRoutes(mux, serviceDID)
 
+	bindAddr := ":" + port
+	if devMode && !devModeAllowPublic {
+		bindAddr = "127.0.0.1:" + port
+		log.Printf("  DEV_MODE: binding to 127.0.0.1 only (set DEV_MODE_ALLOW_PUBLIC=true to override)")
+	}
+
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: mux,
+		Addr:              bindAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 16,
 	}
 
 	// Start HTTP server in a goroutine
 	go func() {
-		log.Printf("  Listening on :%s", port)
+		log.Printf("  Listening on %s", bindAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}

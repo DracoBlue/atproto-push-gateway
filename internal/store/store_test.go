@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -176,5 +177,27 @@ func TestPersistenceAcrossRestart(t *testing.T) {
 	}
 	if !s2.IsBlocked("did:plc:alice", "did:plc:bob") {
 		t.Error("expected block to persist across restart")
+	}
+}
+
+func TestRegisterToken_EnforcesPerDIDLimit(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Register up to the cap — should succeed.
+	for i := 0; i < 20; i++ {
+		tok := fmt.Sprintf("token-%d", i)
+		if err := s.RegisterToken("did:plc:alice", "ios", tok, "app"); err != nil {
+			t.Fatalf("register %d: %v", i, err)
+		}
+	}
+
+	// 21st should fail.
+	if err := s.RegisterToken("did:plc:alice", "ios", "token-21", "app"); err == nil {
+		t.Error("expected error on 21st token, got nil")
 	}
 }

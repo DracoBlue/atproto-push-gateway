@@ -3,9 +3,11 @@ package jetstream
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +21,13 @@ import (
 
 //go:embed zstd_dictionary
 var zstdDictionary []byte
+
+const (
+	wsReadTimeout     = 60 * time.Second
+	wsWriteTimeout    = 10 * time.Second
+	wsPingInterval    = 20 * time.Second
+	wsMaxMessageBytes = 1 << 20 // 1 MiB per frame
+)
 
 type Event struct {
 	DID        string          `json:"did"`
@@ -88,6 +97,11 @@ type VerificationRecord struct {
 	DisplayName string `json:"displayName"`
 }
 
+type dispatchItem struct {
+	actorDID string
+	commit   *CommitEvent
+}
+
 type Consumer struct {
 	url             string
 	store           *store.Store
@@ -96,6 +110,8 @@ type Consumer struct {
 	lastCursor      atomic.Int64
 	stopCh          chan struct{}
 	startCh         chan struct{} // closed when first token registered
+	commitCh        chan dispatchItem
+	eventsDropped   atomic.Int64
 
 	// Stats
 	eventsReceived atomic.Int64
@@ -111,6 +127,7 @@ type Stats struct {
 	PushesSent     int64 `json:"pushesSent"`
 	PushErrors     int64 `json:"pushErrors"`
 	MatchedEvents  int64 `json:"matchedEvents"`
+	EventsDropped  int64 `json:"eventsDropped"`
 	LastCursor     int64 `json:"lastCursor"`
 }
 
@@ -121,6 +138,7 @@ func (c *Consumer) GetStats() Stats {
 		PushesSent:     c.pushesSent.Load(),
 		PushErrors:     c.pushErrors.Load(),
 		MatchedEvents:  c.matchedEvents.Load(),
+		EventsDropped:  c.eventsDropped.Load(),
 		LastCursor:     c.lastCursor.Load(),
 	}
 }
@@ -133,6 +151,7 @@ func NewConsumer(url string, s *store.Store, sender *push.MultiSender, profileRe
 		profileResolver: profileResolver,
 		stopCh:          make(chan struct{}),
 		startCh:         make(chan struct{}),
+		commitCh:        make(chan dispatchItem, 1024),
 	}
 	// If tokens already exist (from SQLite on restart), start immediately
 	if s.HasRegisteredDIDs() {
@@ -165,6 +184,11 @@ func (c *Consumer) Run() {
 	case <-c.stopCh:
 		log.Println("[jetstream] consumer stopped before starting")
 		return
+	}
+
+	const numWorkers = 8
+	for i := 0; i < numWorkers; i++ {
+		go c.dispatchWorker()
 	}
 
 	collections := []string{
@@ -228,6 +252,20 @@ func (c *Consumer) Run() {
 	}
 }
 
+func (c *Consumer) dispatchWorker() {
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case item, ok := <-c.commitCh:
+			if !ok {
+				return
+			}
+			c.handleCommit(item.actorDID, item.commit)
+		}
+	}
+}
+
 func (c *Consumer) connect(url string) error {
 	log.Printf("[jetstream] connecting to %s", url)
 
@@ -237,6 +275,45 @@ func (c *Consumer) connect(url string) error {
 		return err
 	}
 	defer conn.Close()
+
+	conn.SetReadLimit(wsMaxMessageBytes)
+	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	})
+
+	// Ping loop in the background to keep the connection alive. Exits when
+	// the connection is closed or the consumer is stopped. We wait for it
+	// to exit before returning from connect() so the pinger can't race with
+	// conn.Close(), which gorilla documents as safe-to-call-concurrently but
+	// we'd still rather have a clean shutdown with no dangling WriteMessage.
+	pingStop := make(chan struct{})
+	var pingWG sync.WaitGroup
+	pingWG.Add(1)
+	defer func() {
+		close(pingStop)
+		pingWG.Wait()
+	}()
+	go func() {
+		defer pingWG.Done()
+		ticker := time.NewTicker(wsPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+					log.Printf("[jetstream] ping error: %v", err)
+					_ = conn.Close()
+					return
+				}
+			case <-pingStop:
+				return
+			case <-c.stopCh:
+				return
+			}
+		}
+	}()
 
 	// Create zstd decoder with Jetstream dictionary for compressed messages
 	decoder, err := zstd.NewReader(nil, zstd.WithDecoderDicts(zstdDictionary))
@@ -289,7 +366,12 @@ func (c *Consumer) connect(url string) error {
 			continue
 		}
 
-		c.handleCommit(event.DID, event.Commit)
+		select {
+		case c.commitCh <- dispatchItem{actorDID: event.DID, commit: event.Commit}:
+		default:
+			// Queue full → drop this event rather than block the reader.
+			c.eventsDropped.Add(1)
+		}
 	}
 }
 
@@ -615,7 +697,14 @@ func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subj
 
 		if err := c.sender.Send(n); err != nil {
 			c.pushErrors.Add(1)
-			log.Printf("[jetstream] push error for %s: %v", targetDID, err)
+			if errors.Is(err, push.ErrTokenInvalid) {
+				log.Printf("[jetstream] removing invalid token for %s: %v", targetDID, err)
+				if uerr := c.store.UnregisterToken(token.ActorDID, token.Platform, token.PushToken, token.AppID); uerr != nil {
+					log.Printf("[jetstream] error removing invalid token: %v", uerr)
+				}
+			} else {
+				log.Printf("[jetstream] push error for %s: %v", targetDID, err)
+			}
 		} else {
 			c.pushesSent.Add(1)
 		}
