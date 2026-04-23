@@ -43,17 +43,22 @@ type RegisterPushRequest struct {
 	AgeRestricted bool   `json:"ageRestricted,omitempty"`
 }
 
+const (
+	lexiconRegisterPush   = "app.bsky.notification.registerPush"
+	lexiconUnregisterPush = "app.bsky.notification.unregisterPush"
+)
+
 // StatsProvider returns jetstream stats for the health endpoint.
 // Accepts any type — will be JSON-encoded directly.
 type StatsProvider func() interface{}
 
 type Handler struct {
-	store              *store.Store
-	devMode            bool
-	serviceDID         string
-	statsProvider      StatsProvider
-	didResolver        DIDResolver
-	onTokenRegistered  func()
+	store             *store.Store
+	devMode           bool
+	serviceDID        string
+	statsProvider     StatsProvider
+	didResolver       DIDResolver
+	onTokenRegistered func()
 }
 
 func NewHandler(s *store.Store, devMode bool, serviceDID string, sp StatsProvider, onTokenRegistered func()) *Handler {
@@ -65,10 +70,10 @@ func NewHandlerWithoutStats(s *store.Store, devMode bool, serviceDID string) *Ha
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
-	mux.HandleFunc("POST /xrpc/app.bsky.notification.registerPush", h.handleRegisterPush)
-	mux.HandleFunc("POST /xrpc/app.bsky.notification.unregisterPush", h.handleUnregisterPush)
-	mux.HandleFunc("GET /xrpc/app.bsky.notification.registerPush", methodNotAllowed)
-	mux.HandleFunc("GET /xrpc/app.bsky.notification.unregisterPush", methodNotAllowed)
+	mux.HandleFunc("POST /xrpc/"+lexiconRegisterPush, h.handleRegisterPush)
+	mux.HandleFunc("POST /xrpc/"+lexiconUnregisterPush, h.handleUnregisterPush)
+	mux.HandleFunc("GET /xrpc/"+lexiconRegisterPush, methodNotAllowed)
+	mux.HandleFunc("GET /xrpc/"+lexiconUnregisterPush, methodNotAllowed)
 
 	// DID Document
 	mux.HandleFunc("GET /.well-known/did.json", func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +120,7 @@ func (h *Handler) handleRegisterPush(w http.ResponseWriter, r *http.Request) {
 
 	// Verify inter-service JWT before parsing the body so unauthenticated
 	// requests bail in O(JWT-parse) rather than paying for a JSON decode.
-	actorDID, err := h.verifyAuth(r)
+	actorDID, err := h.verifyAuth(r, lexiconRegisterPush)
 	if err != nil {
 		log.Printf("[xrpc] auth error: %v", err)
 		http.Error(w, `{"error":"auth_required","message":"invalid service auth"}`, http.StatusUnauthorized)
@@ -174,7 +179,7 @@ func (h *Handler) handleUnregisterPush(w http.ResponseWriter, r *http.Request) {
 
 	// Verify inter-service JWT before parsing the body so unauthenticated
 	// requests bail in O(JWT-parse) rather than paying for a JSON decode.
-	actorDID, err := h.verifyAuth(r)
+	actorDID, err := h.verifyAuth(r, lexiconUnregisterPush)
 	if err != nil {
 		http.Error(w, `{"error":"auth_required"}`, http.StatusUnauthorized)
 		return
@@ -217,7 +222,7 @@ func (h *Handler) handleUnregisterPush(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) verifyAuth(r *http.Request) (string, error) {
+func (h *Handler) verifyAuth(r *http.Request, expectedLXM string) (string, error) {
 	if h.devMode {
 		// In dev mode, accept a simple X-Actor-DID header for testing
 		did := r.Header.Get("X-Actor-DID")
@@ -273,6 +278,9 @@ func (h *Handler) verifyAuth(r *http.Request) (string, error) {
 
 	if claims.Aud != h.serviceDID {
 		return "", fmt.Errorf("JWT aud mismatch: got %q, want %q", claims.Aud, h.serviceDID)
+	}
+	if claims.Lxm != expectedLXM {
+		return "", fmt.Errorf("JWT lxm mismatch: got %q, want %q", claims.Lxm, expectedLXM)
 	}
 
 	// DID-based signature verification

@@ -88,15 +88,19 @@ The gateway sends English `title` and `body` as defaults, plus structured `data`
 git clone https://github.com/DracoBlue/atproto-push-gateway.git
 cd atproto-push-gateway
 
-# Run in dev mode (no JWT verification required)
+# Run in dev mode (loopback-only by default, with test endpoints enabled)
 DEV_MODE=true go run ./cmd/server
 ```
 
-The gateway starts on port 8080, connects to Jetstream, and serves:
+With `DEV_MODE=true`, the server binds to `127.0.0.1` by default. Set `DEV_MODE_ALLOW_PUBLIC=true` only if you intentionally want to expose dev mode on a public interface.
+
+The gateway starts on port 8080 and serves:
 - `POST /xrpc/app.bsky.notification.registerPush` — Token registration
 - `POST /xrpc/app.bsky.notification.unregisterPush` — Token removal
 - `GET /.well-known/did.json` — DID document for service discovery
 - `GET /health` — Health check with stats
+
+The Jetstream connection is opened after the first token is registered.
 
 In dev mode, additional test endpoints are available:
 - `POST /test/register` — Register a token without JWT auth
@@ -170,12 +174,13 @@ docker run -d \
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `PUSH_GATEWAY_DID` | `did:web:localhost` | Your service DID (e.g. `did:web:push.example.org`) |
+| `PUSH_GATEWAY_DID` | `did:web:localhost` | Your service DID (e.g. `did:web:push.example.org`). Must be a `did:web:` DID. |
 | `PUSH_GATEWAY_PORT` | `8080` | HTTP server port |
 | `SQLITE_PATH` | `./push-gateway.db` | Path to SQLite database file |
 | `JETSTREAM_URL` | `wss://jetstream2.us-east.bsky.network/subscribe` | Jetstream WebSocket URL |
 | `EXPO_PUSH_ACCESS_TOKEN` | (empty) | Expo Push API access token |
-| `DEV_MODE` | (empty) | Set to `true` to enable test endpoints and skip JWT verification |
+| `DEV_MODE` | (empty) | Set to `true` to enable test endpoints and allow the `X-Actor-DID` header to bypass JWT verification for local testing |
+| `DEV_MODE_ALLOW_PUBLIC` | (empty) | Set to `true` to bind dev mode publicly; otherwise `DEV_MODE=true` binds to `127.0.0.1` only |
 | `APNS_KEY_PATH` | (empty) | Path to APNs .p8 key file (for direct APNs delivery) |
 | `APNS_KEY_BASE64` | (empty) | Base64-encoded APNs .p8 key (alternative to file path) |
 | `APNS_KEY_ID` | (empty) | APNs Key ID (from Apple Developer Portal) |
@@ -184,6 +189,23 @@ docker run -d \
 | `APNS_SANDBOX` | (empty) | Set to `true` for APNs sandbox (dev/preview builds) |
 | `FCM_SERVICE_ACCOUNT_PATH` | (empty) | Path to Firebase service account JSON (for direct FCM delivery) |
 | `FCM_SERVICE_ACCOUNT_BASE64` | (empty) | Base64-encoded service account JSON (alternative to file path) |
+
+## Runtime Defaults
+
+| Area | Default | Notes |
+|---|---|---|
+| Dev mode binding | `127.0.0.1:$PUSH_GATEWAY_PORT` | Applies when `DEV_MODE=true`. Set `DEV_MODE_ALLOW_PUBLIC=true` to bind publicly in dev mode. |
+| HTTP server | `ReadHeaderTimeout=10s`, `ReadTimeout=30s`, `WriteTimeout=30s`, `IdleTimeout=120s`, `MaxHeaderBytes=64 KiB` | Protects against slow or oversized requests. |
+| XRPC body size | `64 KiB` | Applies to `registerPush` and `unregisterPush`. |
+| Token / app ID size | `token <= 2048`, `appId <= 256` | Oversized values are rejected with `400`. |
+| JWT checks | `aud` must equal `PUSH_GATEWAY_DID`, `lxm` must match the called XRPC method, `exp` is required and may be at most `5m` in the future, only `ES256` / `ES256K` are accepted | The JSON body `serviceDid` must also match this gateway. |
+| DID resolution | `10s` HTTP timeout, `5s` DNS timeout, `3` redirects max, `256 KiB` document cap | `did:web` resolution refuses localhost, loopback, private, link-local, CGNAT, and IMDS-style targets. |
+| Outbound HTTP | `10s` timeout | Applies to Expo, APNs, FCM, and block-backfill requests. |
+| Jetstream WebSocket | ping every `20s`, read timeout `60s`, write timeout `10s`, frame cap `1 MiB` | Reconnects with exponential backoff up to `60s`. |
+| Jetstream dispatch | `8` workers, queue size `1024` | If the queue fills, new events are dropped and counted in `/health` as `eventsDropped`. |
+| Registered tokens | max `20` per DID | Additional registrations for the same DID are rejected. |
+| Invalid token cleanup | automatic | APNs `410` / `Unregistered` / `BadDeviceToken` and FCM `UNREGISTERED` / `NOT_FOUND` responses remove the stored token. |
+| Block backfill | `100` records/page, max `20` pages | On first token registration, historical blocks are backfilled once from the public AppView. |
 
 ## Production Setup
 
@@ -221,6 +243,8 @@ agent.app.bsky.notification.registerPush({
   },
 });
 ```
+
+The `serviceDid` field must exactly match `PUSH_GATEWAY_DID`; mismatches are rejected.
 
 ### 3. Deploy with TLS
 
@@ -281,10 +305,12 @@ The Jetstream connection is only established when the first push token is regist
 
 The PDS forwards `registerPush` calls with an inter-service JWT signed by the user's identity key. This gateway:
 
-1. Decodes the JWT and validates claims (`iss`, `aud`, `lxm`, `exp`)
-2. Resolves the issuer DID (`did:plc` via plc.directory, `did:web` via .well-known/did.json)
-3. Extracts the `#atproto` signing key from the DID document
-4. Verifies the ECDSA signature (ES256 P-256 and ES256K secp256k1 fully supported)
+1. Requires a Bearer JWT and validates `iss`, `aud`, `lxm`, and `exp`
+2. Requires `aud` to equal the configured service DID and `lxm` to exactly match the called method (`app.bsky.notification.registerPush` or `app.bsky.notification.unregisterPush`)
+3. Rejects tokens whose `exp` is more than 5 minutes in the future
+4. Resolves the issuer DID (`did:plc` via plc.directory, `did:web` via `.well-known/did.json`) with request, DNS, redirect, and size limits
+5. Refuses unsafe `did:web` resolution targets such as localhost, private ranges, loopback, link-local, and IMDS-style addresses
+6. Extracts the `#atproto` signing key from the DID document and verifies the ECDSA signature (`ES256` P-256 and `ES256K` secp256k1 only)
 
 ### Display Name Resolution
 
@@ -294,6 +320,7 @@ Push notification bodies show display names ("Alice liked your post") instead of
 
 The gateway maintains a real-time block graph:
 - `app.bsky.graph.block` events consumed via Jetstream
+- On first token registration for a DID, historical blocks are backfilled once from the public AppView (100 records/page, up to 20 pages)
 - Before sending any push: bidirectional block check (has recipient blocked actor? has actor blocked recipient?)
 - Blocks persisted in SQLite, loaded into memory on startup
 
