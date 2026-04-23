@@ -421,6 +421,98 @@ func TestRegisterPush_AcceptsCorrectAud(t *testing.T) {
 	}
 }
 
+func TestRegisterPush_RejectsMissingLXM(t *testing.T) {
+	key, doc := makeTestKeyAndDoc(t, "did:plc:alice")
+	r := &mockResolver{docs: map[string]*did.DIDDocument{"did:plc:alice": doc}}
+	h, _ := newProdHandler(t, "did:web:push.example.org", r)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	jwt := mintTestJWT(t, key, "did:plc:alice", "did:web:push.example.org",
+		"", time.Now().Add(60*time.Second).Unix(), "ES256")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "ExponentPushToken[x]",
+		Platform:   "ios",
+		AppID:      "app",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/"+lexiconRegisterPush, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 401 {
+		t.Errorf("expected 401 for missing lxm, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUnregisterPush_RejectsWrongLXM(t *testing.T) {
+	key, doc := makeTestKeyAndDoc(t, "did:plc:alice")
+	r := &mockResolver{docs: map[string]*did.DIDDocument{"did:plc:alice": doc}}
+	h, s := newProdHandler(t, "did:web:push.example.org", r)
+
+	if err := s.RegisterToken("did:plc:alice", "ios", "token1", "app.test"); err != nil {
+		t.Fatalf("register seed token: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	jwt := mintTestJWT(t, key, "did:plc:alice", "did:web:push.example.org",
+		lexiconRegisterPush, time.Now().Add(60*time.Second).Unix(), "ES256")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "token1",
+		Platform:   "ios",
+		AppID:      "app.test",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/"+lexiconUnregisterPush, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 401 {
+		t.Errorf("expected 401 for wrong lxm, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUnregisterPush_AcceptsCorrectLXM(t *testing.T) {
+	key, doc := makeTestKeyAndDoc(t, "did:plc:alice")
+	r := &mockResolver{docs: map[string]*did.DIDDocument{"did:plc:alice": doc}}
+	h, s := newProdHandler(t, "did:web:push.example.org", r)
+
+	if err := s.RegisterToken("did:plc:alice", "ios", "token1", "app.test"); err != nil {
+		t.Fatalf("register seed token: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, "did:web:push.example.org")
+
+	jwt := mintTestJWT(t, key, "did:plc:alice", "did:web:push.example.org",
+		lexiconUnregisterPush, time.Now().Add(60*time.Second).Unix(), "ES256")
+
+	body, _ := json.Marshal(RegisterPushRequest{
+		ServiceDID: "did:web:push.example.org",
+		Token:      "token1",
+		Platform:   "ios",
+		AppID:      "app.test",
+	})
+	req := httptest.NewRequest("POST", "/xrpc/"+lexiconUnregisterPush, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200 with correct lxm, got %d: %s", w.Code, w.Body.String())
+	}
+	if s.IsRegistered("did:plc:alice") {
+		t.Error("expected did:plc:alice to be unregistered")
+	}
+}
+
 func TestRegisterPush_RejectsNoneAlg(t *testing.T) {
 	key, doc := makeTestKeyAndDoc(t, "did:plc:alice")
 	_ = key

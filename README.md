@@ -198,7 +198,7 @@ docker run -d \
 | HTTP server | `ReadHeaderTimeout=10s`, `ReadTimeout=30s`, `WriteTimeout=30s`, `IdleTimeout=120s`, `MaxHeaderBytes=64 KiB` | Protects against slow or oversized requests. |
 | XRPC body size | `64 KiB` | Applies to `registerPush` and `unregisterPush`. |
 | Token / app ID size | `token <= 2048`, `appId <= 256` | Oversized values are rejected with `400`. |
-| JWT checks | `aud` must equal `PUSH_GATEWAY_DID`, `exp` is required and may be at most `5m` in the future, only `ES256` / `ES256K` are accepted | The JSON body `serviceDid` must also match this gateway. |
+| JWT checks | `aud` must equal `PUSH_GATEWAY_DID`, `lxm` must match the called XRPC method, `exp` is required and may be at most `5m` in the future, only `ES256` / `ES256K` are accepted | The JSON body `serviceDid` must also match this gateway. |
 | DID resolution | `10s` HTTP timeout, `5s` DNS timeout, `3` redirects max, `256 KiB` document cap | `did:web` resolution refuses localhost, loopback, private, link-local, CGNAT, and IMDS-style targets. |
 | Outbound HTTP | `10s` timeout | Applies to Expo, APNs, FCM, and block-backfill requests. |
 | Jetstream WebSocket | ping every `20s`, read timeout `60s`, write timeout `10s`, frame cap `1 MiB` | Reconnects with exponential backoff up to `60s`. |
@@ -305,11 +305,12 @@ The Jetstream connection is only established when the first push token is regist
 
 The PDS forwards `registerPush` calls with an inter-service JWT signed by the user's identity key. This gateway:
 
-1. Requires a Bearer JWT and validates `iss`, `aud`, and `exp`
-2. Requires `aud` to equal the configured service DID and rejects tokens whose `exp` is more than 5 minutes in the future
-3. Resolves the issuer DID (`did:plc` via plc.directory, `did:web` via `.well-known/did.json`) with request, DNS, redirect, and size limits
-4. Refuses unsafe `did:web` resolution targets such as localhost, private ranges, loopback, link-local, and IMDS-style addresses
-5. Extracts the `#atproto` signing key from the DID document and verifies the ECDSA signature (`ES256` P-256 and `ES256K` secp256k1 only)
+1. Requires a Bearer JWT and validates `iss`, `aud`, `lxm`, and `exp`
+2. Requires `aud` to equal the configured service DID and `lxm` to exactly match the called method (`app.bsky.notification.registerPush` or `app.bsky.notification.unregisterPush`)
+3. Rejects tokens whose `exp` is more than 5 minutes in the future
+4. Resolves the issuer DID (`did:plc` via plc.directory, `did:web` via `.well-known/did.json`) with request, DNS, redirect, and size limits
+5. Refuses unsafe `did:web` resolution targets such as localhost, private ranges, loopback, link-local, and IMDS-style addresses
+6. Extracts the `#atproto` signing key from the DID document and verifies the ECDSA signature (`ES256` P-256 and `ES256K` secp256k1 only)
 
 ### Display Name Resolution
 
