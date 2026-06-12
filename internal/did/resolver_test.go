@@ -218,3 +218,40 @@ func base58Encode(b []byte) string {
 	return string(result)
 }
 
+func TestNewResolverWithCacheSize_FallsBackToDefault(t *testing.T) {
+	resolver := NewResolverWithCacheSize(0)
+	if resolver.maxCacheSize != defaultMaxCacheSize {
+		t.Errorf("expected default cache size %d for size 0, got %d", defaultMaxCacheSize, resolver.maxCacheSize)
+	}
+	resolver = NewResolverWithCacheSize(500)
+	if resolver.maxCacheSize != 500 {
+		t.Errorf("expected cache size 500, got %d", resolver.maxCacheSize)
+	}
+}
+
+func TestEvictOldest(t *testing.T) {
+	resolver := NewResolverWithCacheSize(100)
+
+	base := time.Now()
+	for i := 0; i < 100; i++ {
+		did := "did:plc:" + string(rune('A'+i/26)) + string(rune('a'+i%26))
+		resolver.cache[did] = cacheEntry{
+			doc:      &DIDDocument{ID: did},
+			cachedAt: base.Add(time.Duration(i) * time.Second),
+		}
+	}
+
+	resolver.evictOldest()
+
+	// Should evict the oldest 25 (100/4)
+	if len(resolver.cache) != 75 {
+		t.Errorf("expected cache size 75 after eviction, got %d", len(resolver.cache))
+	}
+	// The newest entry must survive, the oldest must be gone
+	if _, ok := resolver.cache["did:plc:Dv"]; !ok {
+		t.Error("expected newest entry to survive eviction")
+	}
+	if _, ok := resolver.cache["did:plc:Aa"]; ok {
+		t.Error("expected oldest entry to be evicted")
+	}
+}

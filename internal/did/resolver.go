@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	cacheTTL       = 5 * time.Minute
-	requestTimeout = 10 * time.Second
+	cacheTTL            = 5 * time.Minute
+	requestTimeout      = 10 * time.Second
+	defaultMaxCacheSize = 10000
 )
 
 // DIDDocument represents a W3C DID Document.
@@ -53,12 +54,19 @@ type cacheEntry struct {
 
 // Resolver resolves DIDs to DID Documents with caching.
 type Resolver struct {
-	mu     sync.RWMutex
-	cache  map[string]cacheEntry
-	client *http.Client
+	mu           sync.RWMutex
+	cache        map[string]cacheEntry
+	maxCacheSize int
+	client       *http.Client
 }
 
 func NewResolver() *Resolver {
+	return NewResolverWithCacheSize(defaultMaxCacheSize)
+}
+
+// NewResolverWithCacheSize creates a resolver whose document cache is capped
+// at maxCacheSize entries. Sizes <= 0 fall back to the default.
+func NewResolverWithCacheSize(maxCacheSize int) *Resolver {
 	// Custom transport that blocks resolution to private / loopback /
 	// link-local IP addresses for SSRF protection. Applied on every dial,
 	// including redirects.
@@ -99,9 +107,13 @@ func NewResolver() *Resolver {
 			return nil
 		},
 	}
+	if maxCacheSize <= 0 {
+		maxCacheSize = defaultMaxCacheSize
+	}
 	return &Resolver{
-		cache:  make(map[string]cacheEntry),
-		client: client,
+		cache:        make(map[string]cacheEntry),
+		maxCacheSize: maxCacheSize,
+		client:       client,
 	}
 }
 
@@ -153,6 +165,9 @@ func (r *Resolver) ResolveDID(did string) (*DIDDocument, error) {
 
 	// Cache the result
 	r.mu.Lock()
+	if len(r.cache) >= r.maxCacheSize {
+		r.evictOldest()
+	}
 	r.cache[did] = cacheEntry{
 		doc:      doc,
 		cachedAt: time.Now(),
@@ -160,6 +175,38 @@ func (r *Resolver) ResolveDID(did string) (*DIDDocument, error) {
 	r.mu.Unlock()
 
 	return doc, nil
+}
+
+// evictOldest removes the oldest quarter of cache entries so a flood of
+// unique issuer DIDs cannot grow the cache without bound.
+// Must be called with r.mu held for writing.
+func (r *Resolver) evictOldest() {
+	type didTime struct {
+		did      string
+		cachedAt time.Time
+	}
+
+	entries := make([]didTime, 0, len(r.cache))
+	for did, entry := range r.cache {
+		entries = append(entries, didTime{did: did, cachedAt: entry.cachedAt})
+	}
+
+	toEvict := len(entries) / 4
+	if toEvict < 1 {
+		toEvict = 1
+	}
+
+	for i := 0; i < toEvict; i++ {
+		oldestIdx := 0
+		for j := 1; j < len(entries); j++ {
+			if entries[j].cachedAt.Before(entries[oldestIdx].cachedAt) {
+				oldestIdx = j
+			}
+		}
+		delete(r.cache, entries[oldestIdx].did)
+		entries[oldestIdx] = entries[len(entries)-1]
+		entries = entries[:len(entries)-1]
+	}
 }
 
 func (r *Resolver) fetchDIDDocument(did string) (*DIDDocument, error) {

@@ -69,6 +69,12 @@ func NewHandlerWithoutStats(s *store.Store, devMode bool, serviceDID string) *Ha
 	return &Handler{store: s, devMode: devMode, serviceDID: serviceDID, didResolver: did.NewResolver(), onTokenRegistered: nil}
 }
 
+// SetDIDResolver replaces the default DID resolver, e.g. to configure a
+// custom cache size. Must be called before the handler serves requests.
+func (h *Handler) SetDIDResolver(r DIDResolver) {
+	h.didResolver = r
+}
+
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
 	mux.HandleFunc("POST /xrpc/"+lexiconRegisterPush, h.handleRegisterPush)
 	mux.HandleFunc("POST /xrpc/"+lexiconUnregisterPush, h.handleUnregisterPush)
