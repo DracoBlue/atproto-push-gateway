@@ -104,7 +104,7 @@ func (a *APNsSender) getToken() (string, error) {
 
 type apnsPayload struct {
 	APS  apnsAPS           `json:"aps"`
-	Data map[string]string  `json:"data,omitempty"`
+	Data map[string]string `json:"data,omitempty"`
 }
 
 type apnsAPS struct {
@@ -175,6 +175,6 @@ func (a *APNsSender) Send(n Notification) error {
 		return fmt.Errorf("APNs returned %d: %s", resp.StatusCode, errResp.Reason)
 	}
 
-	log.Printf("[push/apns] sent to %s: %s", truncateToken(n.Token, 20), n.Data["reason"])
+	log.Printf("[push/apns] sent to %s: %s", tokenForLog(n.Token), n.Data["reason"])
 	return nil
 }

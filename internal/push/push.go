@@ -50,12 +50,31 @@ func NewExpoPushSender(accessToken string) *ExpoPushSender {
 	}
 }
 
+// debugLogging controls whether push token prefixes appear in logs.
+// Set once at startup via SetDebugLogging before any sends happen.
+var debugLogging bool
+
+// SetDebugLogging enables token-prefix logging (LOG_LEVEL=debug).
+// At the default level, tokens are logged as "[redacted]".
+func SetDebugLogging(enabled bool) {
+	debugLogging = enabled
+}
+
 // truncateToken safely truncates a token for logging, avoiding panics on short tokens.
 func truncateToken(token string, maxLen int) string {
 	if len(token) <= maxLen {
 		return token
 	}
 	return token[:maxLen] + "..."
+}
+
+// tokenForLog returns a loggable form of a push token: a truncated prefix in
+// debug mode, "[redacted]" otherwise.
+func tokenForLog(token string) string {
+	if debugLogging {
+		return truncateToken(token, 20)
+	}
+	return "[redacted]"
 }
 
 func (e *ExpoPushSender) Send(n Notification) error {
@@ -97,7 +116,7 @@ func (e *ExpoPushSender) Send(n Notification) error {
 		return fmt.Errorf("expo push API returned %d", resp.StatusCode)
 	}
 
-	log.Printf("[push/expo] sent to %s: %s", truncateToken(n.Token, 20), n.Data["reason"])
+	log.Printf("[push/expo] sent to %s: %s", tokenForLog(n.Token), n.Data["reason"])
 	return nil
 }
 
@@ -145,10 +164,10 @@ func (m *MultiSender) Send(n Notification) error {
 		log.Printf("[push] skipping Android native token (FCM not configured)")
 		return nil
 	case "web":
-		log.Printf("[push] web push not yet supported, token: %s", truncateToken(n.Token, 20))
+		log.Printf("[push] web push not yet supported, token: %s", tokenForLog(n.Token))
 		return fmt.Errorf("web push not yet supported")
 	default:
-		log.Printf("[push] unsupported platform %q, token: %s", n.Platform, truncateToken(n.Token, 20))
+		log.Printf("[push] unsupported platform %q, token: %s", n.Platform, tokenForLog(n.Token))
 		return fmt.Errorf("unsupported platform: %s", n.Platform)
 	}
 }

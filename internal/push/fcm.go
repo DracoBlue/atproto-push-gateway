@@ -151,6 +151,6 @@ func (f *FCMSender) Send(n Notification) error {
 		return fmt.Errorf("FCM returned %d: %s (%s)", resp.StatusCode, errResp.Error.Status, errResp.Error.Message)
 	}
 
-	log.Printf("[push/fcm] sent to %s: %s", truncateToken(n.Token, 20), n.Data["reason"])
+	log.Printf("[push/fcm] sent to %s: %s", tokenForLog(n.Token), n.Data["reason"])
 	return nil
 }
