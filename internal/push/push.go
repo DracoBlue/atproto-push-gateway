@@ -32,6 +32,7 @@ type Sender interface {
 type ExpoPushSender struct {
 	AccessToken string
 	Client      *http.Client
+	baseURL     string // overridable in tests; defaults to the Expo API
 }
 
 type expoMessage struct {
@@ -47,6 +48,7 @@ func NewExpoPushSender(accessToken string) *ExpoPushSender {
 	return &ExpoPushSender{
 		AccessToken: accessToken,
 		Client:      &http.Client{Timeout: 10 * time.Second},
+		baseURL:     "https://exp.host",
 	}
 }
 
@@ -96,7 +98,7 @@ func (e *ExpoPushSender) Send(n Notification) error {
 		return err
 	}
 
-	req, err := http.NewRequest("POST", "https://exp.host/--/api/v2/push/send", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", e.baseURL+"/--/api/v2/push/send", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

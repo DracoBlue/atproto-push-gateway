@@ -1,6 +1,10 @@
 package did
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/base64"
 	"math/big"
 	"strings"
 	"testing"
@@ -253,5 +257,78 @@ func TestEvictOldest(t *testing.T) {
 	}
 	if _, ok := resolver.cache["did:plc:Aa"]; ok {
 		t.Error("expected oldest entry to be evicted")
+	}
+}
+
+func TestParseJWKKey(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xB64 := base64.RawURLEncoding.EncodeToString(key.PublicKey.X.FillBytes(make([]byte, 32)))
+	yB64 := base64.RawURLEncoding.EncodeToString(key.PublicKey.Y.FillBytes(make([]byte, 32)))
+
+	t.Run("valid P-256", func(t *testing.T) {
+		pub, err := parseJWKKey(&JWK{Kty: "EC", Crv: "P-256", X: xB64, Y: yB64})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if pub.X.Cmp(key.PublicKey.X) != 0 || pub.Y.Cmp(key.PublicKey.Y) != 0 {
+			t.Error("parsed key does not match original")
+		}
+		if pub.Curve != elliptic.P256() {
+			t.Error("expected P-256 curve")
+		}
+	})
+
+	t.Run("rejects non-EC kty", func(t *testing.T) {
+		if _, err := parseJWKKey(&JWK{Kty: "RSA", Crv: "P-256", X: xB64, Y: yB64}); err == nil {
+			t.Error("expected error for kty=RSA")
+		}
+	})
+
+	t.Run("rejects unsupported curve", func(t *testing.T) {
+		if _, err := parseJWKKey(&JWK{Kty: "EC", Crv: "P-384", X: xB64, Y: yB64}); err == nil {
+			t.Error("expected error for P-384")
+		}
+	})
+
+	t.Run("rejects invalid base64", func(t *testing.T) {
+		if _, err := parseJWKKey(&JWK{Kty: "EC", Crv: "P-256", X: "!!!", Y: yB64}); err == nil {
+			t.Error("expected error for invalid x encoding")
+		}
+		if _, err := parseJWKKey(&JWK{Kty: "EC", Crv: "P-256", X: xB64, Y: "!!!"}); err == nil {
+			t.Error("expected error for invalid y encoding")
+		}
+	})
+}
+
+func TestParseMultibaseKey_P256(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := elliptic.MarshalCompressed(elliptic.P256(), key.PublicKey.X, key.PublicKey.Y)
+	multikey := append([]byte{0x80, 0x24}, compressed...)
+	multibase := "z" + base58Encode(multikey)
+
+	pub, err := parseMultibaseKey("Multikey", multibase)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pub.X.Cmp(key.PublicKey.X) != 0 || pub.Y.Cmp(key.PublicKey.Y) != 0 {
+		t.Error("parsed key does not match original")
+	}
+}
+
+func TestParseMultibaseKey_RejectsBadInput(t *testing.T) {
+	if _, err := parseMultibaseKey("Multikey", "z"); err == nil {
+		t.Error("expected error for too-short key")
+	}
+	if _, err := parseMultibaseKey("Multikey", "ufoo"); err == nil {
+		t.Error("expected error for non-base58btc prefix")
+	}
+	if _, err := parseMultibaseKey("Multikey", "z0OIl"); err == nil {
+		t.Error("expected error for invalid base58 characters")
 	}
 }

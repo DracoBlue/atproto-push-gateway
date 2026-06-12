@@ -1,6 +1,9 @@
 package profile
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -74,5 +77,69 @@ func TestEvictOldest(t *testing.T) {
 	// Should evict 25 (100/4)
 	if len(resolver.cache) != 75 {
 		t.Errorf("expected cache size 75 after eviction, got %d", len(resolver.cache))
+	}
+}
+
+func TestFetchProfile_HappyPath(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.URL.Query().Get("actor"); got != "did:plc:alice" {
+			t.Errorf("expected actor did:plc:alice, got %q", got)
+		}
+		json.NewEncoder(w).Encode(map[string]string{
+			"did":         "did:plc:alice",
+			"handle":      "alice.test",
+			"displayName": "Alice",
+		})
+	}))
+	defer srv.Close()
+
+	r := NewResolver()
+	r.apiBaseURL = srv.URL
+
+	displayName, handle := r.ResolveProfile("did:plc:alice")
+	if displayName != "Alice" || handle != "alice.test" {
+		t.Errorf("got (%q, %q), want (Alice, alice.test)", displayName, handle)
+	}
+
+	// Second call must hit the cache, not the server
+	r.ResolveProfile("did:plc:alice")
+	if requests != 1 {
+		t.Errorf("expected 1 upstream request, got %d", requests)
+	}
+
+	if name := r.ResolveDisplayName("did:plc:alice"); name != "Alice" {
+		t.Errorf("expected display name Alice, got %q", name)
+	}
+}
+
+func TestFetchProfile_Non200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	r := NewResolver()
+	r.apiBaseURL = srv.URL
+
+	displayName, handle := r.ResolveProfile("did:plc:missing")
+	if displayName != "" || handle != "" {
+		t.Errorf("expected empty profile on 404, got (%q, %q)", displayName, handle)
+	}
+}
+
+func TestFetchProfile_InvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("{"))
+	}))
+	defer srv.Close()
+
+	r := NewResolver()
+	r.apiBaseURL = srv.URL
+
+	displayName, handle := r.ResolveProfile("did:plc:alice")
+	if displayName != "" || handle != "" {
+		t.Errorf("expected empty profile on parse error, got (%q, %q)", displayName, handle)
 	}
 }

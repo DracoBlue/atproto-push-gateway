@@ -19,3 +19,15 @@ func TestTokenForLog_TruncatesInDebug(t *testing.T) {
 		t.Errorf("expected short token unchanged in debug mode, got %q", got)
 	}
 }
+
+func TestIsExpoToken(t *testing.T) {
+	if !isExpoToken("ExponentPushToken[abc123]") {
+		t.Error("expected Expo token to be detected")
+	}
+	if isExpoToken("d1f2e3a4b5c6") {
+		t.Error("expected native hex token to not be detected as Expo")
+	}
+	if isExpoToken("") {
+		t.Error("expected empty token to not be detected as Expo")
+	}
+}

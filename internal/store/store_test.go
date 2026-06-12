@@ -201,3 +201,144 @@ func TestRegisterToken_EnforcesPerDIDLimit(t *testing.T) {
 		t.Error("expected error on 21st token, got nil")
 	}
 }
+
+func TestHasRegisteredDIDs(t *testing.T) {
+	s := newTestStore(t)
+
+	if s.HasRegisteredDIDs() {
+		t.Error("expected no registered DIDs in fresh store")
+	}
+
+	s.RegisterToken("did:plc:alice", "ios", "token1", "app.test")
+	if !s.HasRegisteredDIDs() {
+		t.Error("expected registered DIDs after RegisterToken")
+	}
+
+	s.UnregisterToken("did:plc:alice", "ios", "token1", "app.test")
+	if s.HasRegisteredDIDs() {
+		t.Error("expected no registered DIDs after UnregisterToken")
+	}
+}
+
+func TestMarkBlocksBackfilled(t *testing.T) {
+	s := newTestStore(t)
+
+	claimed, err := s.MarkBlocksBackfilled("did:plc:alice")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !claimed {
+		t.Error("expected first call to claim the backfill")
+	}
+
+	claimed, err = s.MarkBlocksBackfilled("did:plc:alice")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if claimed {
+		t.Error("expected second call to not claim the backfill")
+	}
+}
+
+func TestRemoveBlockByRKey(t *testing.T) {
+	s := newTestStore(t)
+
+	s.AddBlock("did:plc:alice", "did:plc:bob", "rkey1")
+	if !s.IsBlocked("did:plc:bob", "did:plc:alice") {
+		t.Fatal("expected block to be active")
+	}
+
+	blocked, err := s.RemoveBlockByRKey("did:plc:alice", "rkey1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if blocked != "did:plc:bob" {
+		t.Errorf("expected removed block subject did:plc:bob, got %q", blocked)
+	}
+	if s.IsBlocked("did:plc:bob", "did:plc:alice") {
+		t.Error("expected block to be removed")
+	}
+
+	// Unknown rkey is a no-op
+	blocked, err = s.RemoveBlockByRKey("did:plc:alice", "unknown")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if blocked != "" {
+		t.Errorf("expected empty subject for unknown rkey, got %q", blocked)
+	}
+}
+
+func TestRemoveBlockByRKey_AfterRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddBlock("did:plc:alice", "did:plc:bob", "rkey1")
+	s.Close()
+
+	// Reload from SQLite — the rkey index must survive restarts
+	s2, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+
+	blocked, err := s2.RemoveBlockByRKey("did:plc:alice", "rkey1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if blocked != "did:plc:bob" {
+		t.Errorf("expected did:plc:bob after restart, got %q", blocked)
+	}
+}
+
+func TestVerificationsAddAndRemove(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.AddVerification("did:plc:verifier", "did:plc:subject", "rkey1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	subject, err := s.RemoveVerificationByRKey("did:plc:verifier", "rkey1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "did:plc:subject" {
+		t.Errorf("expected subject did:plc:subject, got %q", subject)
+	}
+
+	// Removing again is a no-op
+	subject, err = s.RemoveVerificationByRKey("did:plc:verifier", "rkey1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "" {
+		t.Errorf("expected empty subject for removed verification, got %q", subject)
+	}
+}
+
+func TestVerificationsPersistAcrossRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddVerification("did:plc:verifier", "did:plc:subject", "rkey1")
+	s.Close()
+
+	s2, err := New(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+
+	subject, err := s2.RemoveVerificationByRKey("did:plc:verifier", "rkey1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "did:plc:subject" {
+		t.Errorf("expected did:plc:subject after restart, got %q", subject)
+	}
+}
