@@ -19,6 +19,7 @@ type FCMSender struct {
 	projectID   string
 	tokenSource oauth2.TokenSource
 	client      *http.Client
+	baseURL     string // overridable in tests; defaults to the FCM API
 }
 
 // NewFCMSender creates a sender from a service account JSON file path.
@@ -60,6 +61,7 @@ func newFCMSenderFromBytes(data []byte) (*FCMSender, error) {
 		projectID:   sa.ProjectID,
 		tokenSource: creds.TokenSource,
 		client:      &http.Client{Timeout: 10 * time.Second},
+		baseURL:     "https://fcm.googleapis.com",
 	}, nil
 }
 
@@ -122,7 +124,7 @@ func (f *FCMSender) Send(n Notification) error {
 		return err
 	}
 
-	url := fmt.Sprintf("https://fcm.googleapis.com/v1/projects/%s/messages:send", f.projectID)
+	url := fmt.Sprintf("%s/v1/projects/%s/messages:send", f.baseURL, f.projectID)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return err

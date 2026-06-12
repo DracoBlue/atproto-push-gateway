@@ -12,6 +12,10 @@ import (
 // backfillClient is a shared HTTP client for public AppView fetches.
 var backfillClient = &http.Client{Timeout: 10 * time.Second}
 
+// backfillEndpoint is the public AppView listRecords endpoint.
+// A package-level var so tests can point it at a local server.
+var backfillEndpoint = "https://public.api.bsky.app/xrpc/com.atproto.repo.listRecords"
+
 // backfillBlocks fetches historical block records from the public AppView for a
 // given DID and seeds them into the store. Runs asynchronously. If a fetch
 // error occurs mid-pagination, the function logs and returns early — blocks
@@ -19,12 +23,11 @@ var backfillClient = &http.Client{Timeout: 10 * time.Second}
 // marked as backfilled (no automatic retry). Blocks seen after the mark
 // via Jetstream still land via the live path.
 func (h *Handler) backfillBlocks(actorDID string) {
-	const endpoint = "https://public.api.bsky.app/xrpc/com.atproto.repo.listRecords"
 	const maxPages = 20 // safety: 100 records/page * 20 = 2000 blocks max
 	cursor := ""
 	total := 0
 	for page := 0; page < maxPages; page++ {
-		u, _ := url.Parse(endpoint)
+		u, _ := url.Parse(backfillEndpoint)
 		q := u.Query()
 		q.Set("repo", actorDID)
 		q.Set("collection", "app.bsky.graph.block")

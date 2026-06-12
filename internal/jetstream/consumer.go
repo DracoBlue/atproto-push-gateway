@@ -109,7 +109,7 @@ type dispatchItem struct {
 type Consumer struct {
 	url                  string
 	store                *store.Store
-	sender               *push.MultiSender
+	sender               push.Sender
 	profileResolver      *profile.Resolver
 	maxDecompressedBytes uint64
 	lastCursor           atomic.Int64
@@ -148,7 +148,7 @@ func (c *Consumer) GetStats() Stats {
 	}
 }
 
-func NewConsumer(url string, s *store.Store, sender *push.MultiSender, profileResolver *profile.Resolver) *Consumer {
+func NewConsumer(url string, s *store.Store, sender push.Sender, profileResolver *profile.Resolver) *Consumer {
 	c := &Consumer{
 		url:                  url,
 		store:                s,

@@ -27,6 +27,7 @@ type Resolver struct {
 	cache        map[string]cacheEntry
 	maxCacheSize int
 	client       *http.Client
+	apiBaseURL   string // overridable in tests; defaults to the public AppView
 }
 
 type profileResponse struct {
@@ -48,6 +49,7 @@ func NewResolverWithCacheSize(maxCacheSize int) *Resolver {
 	return &Resolver{
 		cache:        make(map[string]cacheEntry),
 		maxCacheSize: maxCacheSize,
+		apiBaseURL:   "https://public.api.bsky.app",
 		client: &http.Client{
 			Timeout: requestTimeout,
 		},
@@ -97,7 +99,7 @@ func (r *Resolver) ResolveDisplayName(did string) string {
 }
 
 func (r *Resolver) fetchProfile(did string) (string, string) {
-	reqURL := fmt.Sprintf("https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=%s", url.QueryEscape(did))
+	reqURL := fmt.Sprintf("%s/xrpc/app.bsky.actor.getProfile?actor=%s", r.apiBaseURL, url.QueryEscape(did))
 
 	resp, err := r.client.Get(reqURL)
 	if err != nil {
