@@ -3,6 +3,8 @@ package jetstream
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestExtractDIDFromURI(t *testing.T) {
@@ -235,5 +237,53 @@ func TestParseTextOnlyPost(t *testing.T) {
 	}
 	if len(post.Facets) != 0 {
 		t.Errorf("expected 0 facets, got %d", len(post.Facets))
+	}
+}
+
+func TestZstdDecoderRejectsOversizedFrame(t *testing.T) {
+	// A 4 MiB zero-filled payload compresses to a few KiB but must be
+	// rejected by a consumer capped at 1 MiB decompressed.
+	payload := make([]byte, 4<<20)
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatalf("encoder: %v", err)
+	}
+	compressed := enc.EncodeAll(payload, nil)
+	enc.Close()
+
+	capped := &Consumer{maxDecompressedBytes: 1 << 20}
+	dec, err := capped.newZstdDecoder()
+	if err != nil {
+		t.Fatalf("decoder: %v", err)
+	}
+	defer dec.Close()
+	if _, err := dec.DecodeAll(compressed, nil); err == nil {
+		t.Error("expected error decoding 4 MiB frame with 1 MiB cap, got nil")
+	}
+
+	roomy := &Consumer{maxDecompressedBytes: 8 << 20}
+	dec2, err := roomy.newZstdDecoder()
+	if err != nil {
+		t.Fatalf("decoder: %v", err)
+	}
+	defer dec2.Close()
+	out, err := dec2.DecodeAll(compressed, nil)
+	if err != nil {
+		t.Fatalf("expected 4 MiB frame to decode with 8 MiB cap: %v", err)
+	}
+	if len(out) != len(payload) {
+		t.Errorf("expected %d decompressed bytes, got %d", len(payload), len(out))
+	}
+}
+
+func TestSetMaxDecompressedBytes(t *testing.T) {
+	c := &Consumer{maxDecompressedBytes: defaultMaxDecompressedBytes}
+	c.SetMaxDecompressedBytes(123)
+	if c.maxDecompressedBytes != 123 {
+		t.Errorf("expected 123, got %d", c.maxDecompressedBytes)
+	}
+	c.SetMaxDecompressedBytes(0) // ignored
+	if c.maxDecompressedBytes != 123 {
+		t.Errorf("expected 0 to be ignored, got %d", c.maxDecompressedBytes)
 	}
 }

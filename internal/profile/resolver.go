@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	cacheTTL       = 1 * time.Hour
-	maxCacheSize   = 10000
-	requestTimeout = 5 * time.Second
+	cacheTTL            = 1 * time.Hour
+	defaultMaxCacheSize = 10000
+	requestTimeout      = 5 * time.Second
 )
 
 type cacheEntry struct {
@@ -23,9 +23,10 @@ type cacheEntry struct {
 }
 
 type Resolver struct {
-	mu     sync.RWMutex
-	cache  map[string]cacheEntry
-	client *http.Client
+	mu           sync.RWMutex
+	cache        map[string]cacheEntry
+	maxCacheSize int
+	client       *http.Client
 }
 
 type profileResponse struct {
@@ -35,8 +36,18 @@ type profileResponse struct {
 }
 
 func NewResolver() *Resolver {
+	return NewResolverWithCacheSize(defaultMaxCacheSize)
+}
+
+// NewResolverWithCacheSize creates a resolver whose profile cache is capped
+// at maxCacheSize entries. Sizes <= 0 fall back to the default.
+func NewResolverWithCacheSize(maxCacheSize int) *Resolver {
+	if maxCacheSize <= 0 {
+		maxCacheSize = defaultMaxCacheSize
+	}
 	return &Resolver{
-		cache: make(map[string]cacheEntry),
+		cache:        make(map[string]cacheEntry),
+		maxCacheSize: maxCacheSize,
 		client: &http.Client{
 			Timeout: requestTimeout,
 		},
@@ -59,7 +70,7 @@ func (r *Resolver) ResolveProfile(did string) (string, string) {
 
 	// Cache the result
 	r.mu.Lock()
-	if len(r.cache) >= maxCacheSize {
+	if len(r.cache) >= r.maxCacheSize {
 		r.evictOldest()
 	}
 	r.cache[did] = cacheEntry{

@@ -22,8 +22,8 @@ type Block struct {
 }
 
 type Store struct {
-	db         *sql.DB
-	mu         sync.RWMutex
+	db                  *sql.DB
+	mu                  sync.RWMutex
 	registeredDIDs      map[string]bool
 	blocks              map[string]map[string]bool   // blocker -> blocked -> true
 	blocksByRKey        map[string]map[string]string // blocker -> rkey -> blocked
