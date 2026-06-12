@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/dracoblue/atproto-push-gateway/internal/did"
 	"github.com/dracoblue/atproto-push-gateway/internal/jetstream"
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
@@ -25,6 +27,18 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
+func getEnvInt64(key string, fallback int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		log.Fatalf("%s must be a positive integer (got %q)", key, v)
+	}
+	return n
+}
+
 func main() {
 	port := getEnv("PUSH_GATEWAY_PORT", "8080")
 	serviceDID := getEnv("PUSH_GATEWAY_DID", "did:web:localhost")
@@ -36,6 +50,10 @@ func main() {
 	expoPushToken := getEnv("EXPO_PUSH_ACCESS_TOKEN", "")
 	devMode := getEnv("DEV_MODE", "") == "true"
 	devModeAllowPublic := getEnv("DEV_MODE_ALLOW_PUBLIC", "") == "true"
+	logLevel := getEnv("LOG_LEVEL", "info")
+	didCacheSize := getEnvInt64("DID_CACHE_SIZE", 10000)
+	profileCacheSize := getEnvInt64("PROFILE_CACHE_SIZE", 10000)
+	maxDecompressedBytes := getEnvInt64("JETSTREAM_MAX_DECOMPRESSED_BYTES", 8<<20)
 
 	// APNs direct delivery (optional)
 	apnsKeyPath := getEnv("APNS_KEY_PATH", "")
@@ -74,6 +92,7 @@ func main() {
 	log.Printf("  Loaded: %d tokens, %d blocks, %d DIDs", tokens, blocks, dids)
 
 	// Initialize push sender
+	push.SetDebugLogging(strings.EqualFold(logLevel, "debug"))
 	sender := push.NewMultiSender(expoPushToken)
 
 	// Configure direct APNs if key is available (file path or base64)
@@ -101,10 +120,10 @@ func main() {
 		if apnsSender != nil {
 			sender.APNs = apnsSender
 			env := "production"
-		if apnsSandbox {
-			env = "sandbox"
-		}
-		log.Printf("  APNs:      enabled (key=%s, team=%s, topic=%s, env=%s)", apnsKeyID, apnsTeamID, apnsTopic, env)
+			if apnsSandbox {
+				env = "sandbox"
+			}
+			log.Printf("  APNs:      enabled (key=%s, team=%s, topic=%s, env=%s)", apnsKeyID, apnsTeamID, apnsTopic, env)
 		} else {
 			log.Printf("  APNs:      disabled (no key configured)")
 		}
@@ -140,15 +159,17 @@ func main() {
 	}
 
 	// Initialize profile resolver for display names
-	profileResolver := profile.NewResolver()
+	profileResolver := profile.NewResolverWithCacheSize(int(profileCacheSize))
 
 	// Initialize Jetstream consumer
 	consumer := jetstream.NewConsumer(jetstreamURL, s, sender, profileResolver)
+	consumer.SetMaxDecompressedBytes(maxDecompressedBytes)
 	go consumer.Run()
 
 	// Initialize HTTP server
 	mux := http.NewServeMux()
 	handler := xrpc.NewHandler(s, devMode, serviceDID, func() interface{} { return consumer.GetStats() }, consumer.NotifyTokenRegistered)
+	handler.SetDIDResolver(did.NewResolverWithCacheSize(int(didCacheSize)))
 	handler.RegisterRoutes(mux, serviceDID)
 
 	bindAddr := ":" + port

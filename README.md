@@ -189,6 +189,10 @@ docker run -d \
 | `APNS_SANDBOX` | (empty) | Set to `true` for APNs sandbox (dev/preview builds) |
 | `FCM_SERVICE_ACCOUNT_PATH` | (empty) | Path to Firebase service account JSON (for direct FCM delivery) |
 | `FCM_SERVICE_ACCOUNT_BASE64` | (empty) | Base64-encoded service account JSON (alternative to file path) |
+| `LOG_LEVEL` | `info` | Set to `debug` to log truncated push token prefixes; otherwise tokens are logged as `[redacted]` |
+| `DID_CACHE_SIZE` | `10000` | Max entries in the DID document cache (oldest quarter evicted when full) |
+| `PROFILE_CACHE_SIZE` | `10000` | Max entries in the profile/display name cache (oldest quarter evicted when full) |
+| `JETSTREAM_MAX_DECOMPRESSED_BYTES` | `8388608` (8 MiB) | Max decompressed size of a single Jetstream zstd frame (decompression bomb protection) |
 
 ## Runtime Defaults
 
@@ -199,9 +203,9 @@ docker run -d \
 | XRPC body size | `64 KiB` | Applies to `registerPush` and `unregisterPush`. |
 | Token / app ID size | `token <= 2048`, `appId <= 256` | Oversized values are rejected with `400`. |
 | JWT checks | `aud` must equal `PUSH_GATEWAY_DID`, `lxm` must match the called XRPC method, `exp` is required and may be at most `5m` in the future, only `ES256` / `ES256K` are accepted | The JSON body `serviceDid` must also match this gateway. |
-| DID resolution | `10s` HTTP timeout, `5s` DNS timeout, `3` redirects max, `256 KiB` document cap | `did:web` resolution refuses localhost, loopback, private, link-local, CGNAT, and IMDS-style targets. |
+| DID resolution | `10s` HTTP timeout, `5s` DNS timeout, `3` redirects max, `256 KiB` document cap, cache capped at `DID_CACHE_SIZE` | `did:web` resolution refuses localhost, loopback, private, link-local, CGNAT, and IMDS-style targets. |
 | Outbound HTTP | `10s` timeout | Applies to Expo, APNs, FCM, and block-backfill requests. |
-| Jetstream WebSocket | ping every `20s`, read timeout `60s`, write timeout `10s`, frame cap `1 MiB` | Reconnects with exponential backoff up to `60s`. |
+| Jetstream WebSocket | ping every `20s`, read timeout `60s`, write timeout `10s`, frame cap `1 MiB`, decompressed frame cap `8 MiB` (`JETSTREAM_MAX_DECOMPRESSED_BYTES`) | Reconnects with exponential backoff up to `60s`. |
 | Jetstream dispatch | `8` workers, queue size `1024` | If the queue fills, new events are dropped and counted in `/health` as `eventsDropped`. |
 | Registered tokens | max `20` per DID | Additional registrations for the same DID are rejected. |
 | Invalid token cleanup | automatic | APNs `410` / `Unregistered` / `BadDeviceToken` and FCM `UNREGISTERED` / `NOT_FOUND` responses remove the stored token. |
@@ -314,7 +318,7 @@ The PDS forwards `registerPush` calls with an inter-service JWT signed by the us
 
 ### Display Name Resolution
 
-Push notification bodies show display names ("Alice liked your post") instead of raw DIDs. Names are resolved via the public AppView API (`app.bsky.actor.getProfile`) and cached in memory (1 hour TTL, max 10,000 entries).
+Push notification bodies show display names ("Alice liked your post") instead of raw DIDs. Names are resolved via the public AppView API (`app.bsky.actor.getProfile`) and cached in memory (1 hour TTL, max 10,000 entries by default — see `PROFILE_CACHE_SIZE`).
 
 ## Block Handling
 
