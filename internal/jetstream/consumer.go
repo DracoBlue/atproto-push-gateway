@@ -27,13 +27,17 @@ const (
 	wsWriteTimeout    = 10 * time.Second
 	wsPingInterval    = 20 * time.Second
 	wsMaxMessageBytes = 1 << 20 // 1 MiB per frame
+
+	// defaultMaxDecompressedBytes caps the decompressed size of a single
+	// zstd frame so a decompression bomb cannot exhaust memory.
+	defaultMaxDecompressedBytes = 8 << 20 // 8 MiB
 )
 
 type Event struct {
-	DID        string          `json:"did"`
-	TimeUS     int64           `json:"time_us"`
-	Kind       string          `json:"kind"`
-	Commit     *CommitEvent    `json:"commit,omitempty"`
+	DID    string       `json:"did"`
+	TimeUS int64        `json:"time_us"`
+	Kind   string       `json:"kind"`
+	Commit *CommitEvent `json:"commit,omitempty"`
 }
 
 type CommitEvent struct {
@@ -103,15 +107,16 @@ type dispatchItem struct {
 }
 
 type Consumer struct {
-	url             string
-	store           *store.Store
-	sender          *push.MultiSender
-	profileResolver *profile.Resolver
-	lastCursor      atomic.Int64
-	stopCh          chan struct{}
-	startCh         chan struct{} // closed when first token registered
-	commitCh        chan dispatchItem
-	eventsDropped   atomic.Int64
+	url                  string
+	store                *store.Store
+	sender               *push.MultiSender
+	profileResolver      *profile.Resolver
+	maxDecompressedBytes uint64
+	lastCursor           atomic.Int64
+	stopCh               chan struct{}
+	startCh              chan struct{} // closed when first token registered
+	commitCh             chan dispatchItem
+	eventsDropped        atomic.Int64
 
 	// Stats
 	eventsReceived atomic.Int64
@@ -145,13 +150,14 @@ func (c *Consumer) GetStats() Stats {
 
 func NewConsumer(url string, s *store.Store, sender *push.MultiSender, profileResolver *profile.Resolver) *Consumer {
 	c := &Consumer{
-		url:             url,
-		store:           s,
-		sender:          sender,
-		profileResolver: profileResolver,
-		stopCh:          make(chan struct{}),
-		startCh:         make(chan struct{}),
-		commitCh:        make(chan dispatchItem, 1024),
+		url:                  url,
+		store:                s,
+		sender:               sender,
+		profileResolver:      profileResolver,
+		maxDecompressedBytes: defaultMaxDecompressedBytes,
+		stopCh:               make(chan struct{}),
+		startCh:              make(chan struct{}),
+		commitCh:             make(chan dispatchItem, 1024),
 	}
 	// If tokens already exist (from SQLite on restart), start immediately
 	if s.HasRegisteredDIDs() {
@@ -163,6 +169,23 @@ func NewConsumer(url string, s *store.Store, sender *push.MultiSender, profileRe
 // Stop signals the consumer to stop reconnecting.
 func (c *Consumer) Stop() {
 	close(c.stopCh)
+}
+
+// SetMaxDecompressedBytes overrides the per-frame decompression cap.
+// Must be called before Run(). Values <= 0 keep the default.
+func (c *Consumer) SetMaxDecompressedBytes(n int64) {
+	if n > 0 {
+		c.maxDecompressedBytes = uint64(n)
+	}
+}
+
+// newZstdDecoder creates a zstd decoder with the Jetstream dictionary and the
+// configured decompressed-size cap.
+func (c *Consumer) newZstdDecoder() (*zstd.Decoder, error) {
+	return zstd.NewReader(nil,
+		zstd.WithDecoderDicts(zstdDictionary),
+		zstd.WithDecoderMaxMemory(c.maxDecompressedBytes),
+	)
 }
 
 // NotifyTokenRegistered signals that a token was registered.
@@ -316,7 +339,7 @@ func (c *Consumer) connect(url string) error {
 	}()
 
 	// Create zstd decoder with Jetstream dictionary for compressed messages
-	decoder, err := zstd.NewReader(nil, zstd.WithDecoderDicts(zstdDictionary))
+	decoder, err := c.newZstdDecoder()
 	if err != nil {
 		log.Printf("[jetstream] failed to create zstd decoder: %v", err)
 		return err
