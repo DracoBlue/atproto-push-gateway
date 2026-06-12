@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0](https://github.com/DracoBlue/atproto-push-gateway/compare/v1.2.0...v1.3.0) (2026-06-12)
+
+
+### Features
+
+* **server:** add LOG_LEVEL and cache/decompression size env vars ([fda93ff](https://github.com/DracoBlue/atproto-push-gateway/commit/fda93ffecbb003cc69f353ed5ccf17f87f48283a))
+
+
+### Bug Fixes
+
+* **did:** cap DID document cache size ([e37f924](https://github.com/DracoBlue/atproto-push-gateway/commit/e37f9249b544f5ab06579a4762dda1368845a3ee))
+* **jetstream:** cap decompressed zstd frame size ([19fe6f4](https://github.com/DracoBlue/atproto-push-gateway/commit/19fe6f46df5088ef6ed066bb19c65b8044694d49))
+* **push:** redact push tokens in logs unless debug logging is enabled ([f603c48](https://github.com/DracoBlue/atproto-push-gateway/commit/f603c48ef136867c894f6877f06b8be3f18f9d4a))
+
 ## [1.2.0](https://github.com/DracoBlue/atproto-push-gateway/compare/v1.1.0...v1.2.0) (2026-04-23)
 
 
