@@ -13,11 +13,11 @@ Your App                        PDS (user's)              push.example.org
     │                               │                            │
     │─── registerPush ─────────---─>│                            │
     │    serviceDid:                │─── XRPC forward ──────────>│
-    │    did:web:push.example.org   │    + Service-Auth JWT       │
+    │    did:web:push.example.org   │    + Service-Auth JWT      │
     │                               │                            │── store token in SQLite
     │                               │                            │
-    │                               │                    Jetstream│
-    │                               │                   (WebSocket)
+    │                               │                 Jetstream  │
+    │                               │                (WebSocket) |
     │                               │                            │── match event to DID
     │                               │                            │── check block graph
     │                               │                            │── construct payload
@@ -37,9 +37,9 @@ The gateway:
 |---|---|---|
 | Like | New like | X liked your post |
 | Repost | New repost | X reposted your post |
-| Reply | New reply | X replied to your post |
-| Mention | New mention | X mentioned you |
-| Quote | New quote | X quoted your post |
+| Reply | New reply | X replied to your post *(or `X replied: <post text>` when text is available)* |
+| Mention | New mention | X mentioned you *(or `X mentioned you: <post text>`)* |
+| Quote | New quote | X quoted your post *(or `X quoted your post: <post text>`)* |
 | Follow | New follower | X followed you |
 | Like via repost | New like | X liked a post you reposted |
 | Repost via repost | New repost | X reposted a post you reposted |
@@ -78,6 +78,7 @@ The gateway sends English `title` and `body` as defaults, plus structured `data`
 | `actorDid` | DID of the actor who performed the action |
 | `actorDisplayName` | Actor's display name (may be empty) |
 | `actorHandle` | Actor's handle (may be empty) |
+| `reasonSubject` | Post text for `reply`, `quote`, `mention` (sanitized, truncated to `PUSH_POST_TEXT_MAX_GRAPHEMES`). Omitted for other reasons — see [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md#post-text-limits). |
 
 ## Quick Start
 
@@ -193,6 +194,7 @@ docker run -d \
 | `DID_CACHE_SIZE` | `10000` | Max entries in the DID document cache (oldest quarter evicted when full) |
 | `PROFILE_CACHE_SIZE` | `10000` | Max entries in the profile/display name cache (oldest quarter evicted when full) |
 | `JETSTREAM_MAX_DECOMPRESSED_BYTES` | `8388608` (8 MiB) | Max decompressed size of a single Jetstream zstd frame (decompression bomb protection) |
+| `PUSH_POST_TEXT_MAX_GRAPHEMES` | `300` | Max length (codepoints) of the post text included as `reasonSubject` for `reply` / `quote` / `mention`. Matches Bluesky's `MAX_GRAPHEMES` post limit. |
 
 ## Runtime Defaults
 

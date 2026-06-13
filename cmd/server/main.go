@@ -54,6 +54,7 @@ func main() {
 	didCacheSize := getEnvInt64("DID_CACHE_SIZE", 10000)
 	profileCacheSize := getEnvInt64("PROFILE_CACHE_SIZE", 10000)
 	maxDecompressedBytes := getEnvInt64("JETSTREAM_MAX_DECOMPRESSED_BYTES", 8<<20)
+	postTextMaxGraphemes := getEnvInt64("PUSH_POST_TEXT_MAX_GRAPHEMES", 300)
 
 	// APNs direct delivery (optional)
 	apnsKeyPath := getEnv("APNS_KEY_PATH", "")
@@ -164,6 +165,7 @@ func main() {
 	// Initialize Jetstream consumer
 	consumer := jetstream.NewConsumer(jetstreamURL, s, sender, profileResolver)
 	consumer.SetMaxDecompressedBytes(maxDecompressedBytes)
+	consumer.SetPostTextMaxGraphemes(int(postTextMaxGraphemes))
 	go consumer.Run()
 
 	// Initialize HTTP server

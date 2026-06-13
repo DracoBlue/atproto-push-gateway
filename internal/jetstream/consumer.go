@@ -112,6 +112,7 @@ type Consumer struct {
 	sender               push.Sender
 	profileResolver      *profile.Resolver
 	maxDecompressedBytes uint64
+	postTextMaxGraphemes int
 	lastCursor           atomic.Int64
 	stopCh               chan struct{}
 	startCh              chan struct{} // closed when first token registered
@@ -155,6 +156,7 @@ func NewConsumer(url string, s *store.Store, sender push.Sender, profileResolver
 		sender:               sender,
 		profileResolver:      profileResolver,
 		maxDecompressedBytes: defaultMaxDecompressedBytes,
+		postTextMaxGraphemes: defaultPostTextMaxGraphemes,
 		stopCh:               make(chan struct{}),
 		startCh:              make(chan struct{}),
 		commitCh:             make(chan dispatchItem, 1024),
@@ -176,6 +178,15 @@ func (c *Consumer) Stop() {
 func (c *Consumer) SetMaxDecompressedBytes(n int64) {
 	if n > 0 {
 		c.maxDecompressedBytes = uint64(n)
+	}
+}
+
+// SetPostTextMaxGraphemes overrides the max length of the post text
+// included as `reasonSubject` for reply/quote/mention notifications.
+// Values <= 0 keep the default (300, matching Bluesky's MAX_GRAPHEMES).
+func (c *Consumer) SetPostTextMaxGraphemes(n int) {
+	if n > 0 {
+		c.postTextMaxGraphemes = n
 	}
 }
 
@@ -455,13 +466,13 @@ func (c *Consumer) handleLike(actorDID string, rkey string, record json.RawMessa
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.like/%s", actorDID, rkey)
-	c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI)
+	c.sendNotification(actorDID, targetDID, "like", recordURI, like.Subject.URI, "")
 
 	// like-via-repost: notify the reposter if discovered via their repost
 	if like.Via != nil {
 		reposterDID := extractDIDFromURI(like.Via.URI)
 		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
-			c.sendNotification(actorDID, reposterDID, "like-via-repost", recordURI, like.Subject.URI)
+			c.sendNotification(actorDID, reposterDID, "like-via-repost", recordURI, like.Subject.URI, "")
 		}
 	}
 }
@@ -478,13 +489,13 @@ func (c *Consumer) handleRepost(actorDID string, rkey string, record json.RawMes
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.feed.repost/%s", actorDID, rkey)
-	c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI)
+	c.sendNotification(actorDID, targetDID, "repost", recordURI, repost.Subject.URI, "")
 
 	// repost-via-repost: notify the original reposter if discovered via their repost
 	if repost.Via != nil {
 		reposterDID := extractDIDFromURI(repost.Via.URI)
 		if reposterDID != "" && reposterDID != actorDID && reposterDID != targetDID {
-			c.sendNotification(actorDID, reposterDID, "repost-via-repost", recordURI, repost.Subject.URI)
+			c.sendNotification(actorDID, reposterDID, "repost-via-repost", recordURI, repost.Subject.URI, "")
 		}
 	}
 }
@@ -496,12 +507,13 @@ func (c *Consumer) handlePost(actorDID string, rkey string, record json.RawMessa
 	}
 
 	postURI := fmt.Sprintf("at://%s/app.bsky.feed.post/%s", actorDID, rkey)
+	postText := truncatePostText(sanitizePostText(post.Text), c.postTextMaxGraphemes)
 
 	// Reply
 	if post.Reply != nil {
 		targetDID := extractDIDFromURI(post.Reply.Parent.URI)
 		if targetDID != "" && targetDID != actorDID {
-			c.sendNotification(actorDID, targetDID, "reply", postURI, post.Reply.Parent.URI)
+			c.sendNotification(actorDID, targetDID, "reply", postURI, post.Reply.Parent.URI, postText)
 		}
 	}
 
@@ -509,7 +521,7 @@ func (c *Consumer) handlePost(actorDID string, rkey string, record json.RawMessa
 	if post.Embed != nil && post.Embed.Type == "app.bsky.embed.record" && post.Embed.Record != nil {
 		targetDID := extractDIDFromURI(post.Embed.Record.URI)
 		if targetDID != "" && targetDID != actorDID {
-			c.sendNotification(actorDID, targetDID, "quote", postURI, post.Embed.Record.URI)
+			c.sendNotification(actorDID, targetDID, "quote", postURI, post.Embed.Record.URI, postText)
 		}
 	}
 
@@ -517,7 +529,7 @@ func (c *Consumer) handlePost(actorDID string, rkey string, record json.RawMessa
 	for _, facet := range post.Facets {
 		for _, feature := range facet.Features {
 			if feature.Type == "app.bsky.richtext.facet#mention" && feature.DID != "" && feature.DID != actorDID {
-				c.sendNotification(actorDID, feature.DID, "mention", postURI, "")
+				c.sendNotification(actorDID, feature.DID, "mention", postURI, "", postText)
 			}
 		}
 	}
@@ -534,7 +546,7 @@ func (c *Consumer) handleFollow(actorDID string, rkey string, record json.RawMes
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.follow/%s", actorDID, rkey)
-	c.sendNotification(actorDID, follow.Subject, "follow", recordURI, "")
+	c.sendNotification(actorDID, follow.Subject, "follow", recordURI, "", "")
 }
 
 func (c *Consumer) handleBlockCreate(actorDID string, rkey string, record json.RawMessage) {
@@ -588,7 +600,7 @@ func (c *Consumer) handleVerificationCreate(verifierDID string, rkey string, rec
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.verification/%s", verifierDID, rkey)
-	c.sendNotification(verifierDID, verification.Subject, "verified", recordURI, "")
+	c.sendNotification(verifierDID, verification.Subject, "verified", recordURI, "", "")
 	log.Printf("[jetstream] verified: %s verified %s (rkey=%s)", verifierDID, verification.Subject, rkey)
 }
 
@@ -612,7 +624,7 @@ func (c *Consumer) handleVerificationDelete(verifierDID string, rkey string) {
 	}
 
 	recordURI := fmt.Sprintf("at://%s/app.bsky.graph.verification/%s", verifierDID, rkey)
-	c.sendNotification(verifierDID, subjectDID, "unverified", recordURI, "")
+	c.sendNotification(verifierDID, subjectDID, "unverified", recordURI, "", "")
 	log.Printf("[jetstream] unverified: %s unverified %s (rkey=%s)", verifierDID, subjectDID, rkey)
 }
 
@@ -646,7 +658,16 @@ var reasonBodyTemplates = map[string]string{
 	"unverified":        "Your account verification was removed",
 }
 
-func formatNotification(reason, actorDisplayName, actorHandle string) (string, string) {
+// reasonBodyTemplatesWithText is used when we have the actor's post text
+// (reply/quote/mention). The first %s is the actor name, the second %s
+// is the sanitized + truncated post body.
+var reasonBodyTemplatesWithText = map[string]string{
+	"reply":   "%s replied: %s",
+	"quote":   "%s quoted your post: %s",
+	"mention": "%s mentioned you: %s",
+}
+
+func formatNotification(reason, actorDisplayName, actorHandle, postText string) (string, string) {
 	title := reasonTitles[reason]
 	if title == "" {
 		title = "Notification"
@@ -658,6 +679,12 @@ func formatNotification(reason, actorDisplayName, actorHandle string) (string, s
 	}
 	if actorName == "" {
 		actorName = "Someone"
+	}
+
+	if postText != "" {
+		if tmpl, ok := reasonBodyTemplatesWithText[reason]; ok {
+			return title, fmt.Sprintf(tmpl, actorName, postText)
+		}
 	}
 
 	template := reasonBodyTemplates[reason]
@@ -672,7 +699,7 @@ func formatNotification(reason, actorDisplayName, actorHandle string) (string, s
 	return title, fmt.Sprintf(template, actorName)
 }
 
-func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subjectURI string) {
+func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subjectURI, postText string) {
 	if !c.store.IsRegistered(targetDID) {
 		return
 	}
@@ -697,7 +724,7 @@ func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subj
 		actorDisplayName, actorHandle = c.profileResolver.ResolveProfile(actorDID)
 	}
 
-	title, body := formatNotification(reason, actorDisplayName, actorHandle)
+	title, body := formatNotification(reason, actorDisplayName, actorHandle, postText)
 
 	for _, token := range tokens {
 		n := push.Notification{
@@ -716,6 +743,9 @@ func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subj
 		}
 		if subjectURI != "" {
 			n.Data["subject"] = subjectURI
+		}
+		if postText != "" {
+			n.Data["reasonSubject"] = postText
 		}
 
 		if err := c.sender.Send(n); err != nil {

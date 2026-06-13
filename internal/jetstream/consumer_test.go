@@ -294,27 +294,32 @@ func TestFormatNotification(t *testing.T) {
 		reason      string
 		displayName string
 		handle      string
+		postText    string
 		wantTitle   string
 		wantBody    string
 	}{
-		{"like with display name", "like", "Alice", "alice.test", "New like", "Alice liked your post"},
-		{"like falls back to handle", "like", "", "alice.test", "New like", "alice.test liked your post"},
-		{"like falls back to Someone", "like", "", "", "New like", "Someone liked your post"},
-		{"repost", "repost", "Alice", "", "New repost", "Alice reposted your post"},
-		{"reply", "reply", "Alice", "", "New reply", "Alice replied to your post"},
-		{"mention", "mention", "Alice", "", "New mention", "Alice mentioned you"},
-		{"quote", "quote", "Alice", "", "New quote", "Alice quoted your post"},
-		{"follow", "follow", "Alice", "", "New follower", "Alice followed you"},
-		{"like-via-repost", "like-via-repost", "Alice", "", "New like", "Alice liked a post you reposted"},
-		{"repost-via-repost", "repost-via-repost", "Alice", "", "New repost", "Alice reposted a post you reposted"},
-		{"verified has no actor", "verified", "Alice", "", "Verified", "Your account has been verified"},
-		{"unverified has no actor", "unverified", "Alice", "", "Verification removed", "Your account verification was removed"},
-		{"unknown reason", "something-new", "Alice", "", "Notification", "Alice"},
+		{"like with display name", "like", "Alice", "alice.test", "", "New like", "Alice liked your post"},
+		{"like falls back to handle", "like", "", "alice.test", "", "New like", "alice.test liked your post"},
+		{"like falls back to Someone", "like", "", "", "", "New like", "Someone liked your post"},
+		{"repost", "repost", "Alice", "", "", "New repost", "Alice reposted your post"},
+		{"reply without text", "reply", "Alice", "", "", "New reply", "Alice replied to your post"},
+		{"reply with text", "reply", "Alice", "", "Great post!", "New reply", "Alice replied: Great post!"},
+		{"mention without text", "mention", "Alice", "", "", "New mention", "Alice mentioned you"},
+		{"mention with text", "mention", "Alice", "", "Hey @bob check this", "New mention", "Alice mentioned you: Hey @bob check this"},
+		{"quote without text", "quote", "Alice", "", "", "New quote", "Alice quoted your post"},
+		{"quote with text", "quote", "Alice", "", "This is so true!", "New quote", "Alice quoted your post: This is so true!"},
+		{"like ignores postText", "like", "Alice", "", "ignored", "New like", "Alice liked your post"},
+		{"follow", "follow", "Alice", "", "", "New follower", "Alice followed you"},
+		{"like-via-repost", "like-via-repost", "Alice", "", "", "New like", "Alice liked a post you reposted"},
+		{"repost-via-repost", "repost-via-repost", "Alice", "", "", "New repost", "Alice reposted a post you reposted"},
+		{"verified has no actor", "verified", "Alice", "", "", "Verified", "Your account has been verified"},
+		{"unverified has no actor", "unverified", "Alice", "", "", "Verification removed", "Your account verification was removed"},
+		{"unknown reason", "something-new", "Alice", "", "", "Notification", "Alice"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			title, body := formatNotification(tt.reason, tt.displayName, tt.handle)
+			title, body := formatNotification(tt.reason, tt.displayName, tt.handle, tt.postText)
 			if title != tt.wantTitle {
 				t.Errorf("title: got %q, want %q", title, tt.wantTitle)
 			}
