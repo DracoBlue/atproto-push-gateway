@@ -198,6 +198,10 @@ docker run -d \
 | `PUSH_APPVIEW_URL` | `https://public.api.bsky.app` | AppView base URL. Used by both the profile resolver (display names) and the post-text resolver (lazy fetch for like/repost variants). |
 | `PUSH_POST_TEXT_FETCH` | `true` | Set to `false` to disable lazy fetching of post text for `like` / `repost` / `like-via-repost` / `repost-via-repost`. `reply` / `quote` / `mention` still carry inline text from Jetstream regardless. |
 | `PUSH_POST_TEXT_CACHE_SIZE` | `10000` | Max entries in the post-text cache (oldest quarter evicted when full). |
+| `ORIGIN_VERIFY_SECRET` | (empty) | Shared secret required on every request. When set, requests missing the header or carrying the wrong value are rejected with `403`. Empty disables the check. See [Origin Verify](#origin-verify-cdn--waf-shared-secret). |
+| `ORIGIN_VERIFY_HEADER_NAME` | `X-Origin-Verify` | Name of the request header carrying the shared secret. |
+| `ORIGIN_VERIFY_EXCLUDE_HEALTH` | (empty) | Set to `true` to exempt `GET /health` from the origin-verify check (useful when LB / k8s probes can't set custom headers). |
+| `ORIGIN_VERIFY_EXCLUDE_DID_JSON` | (empty) | Set to `true` to exempt `GET /.well-known/did.json` from the origin-verify check. |
 
 ## Runtime Defaults
 
@@ -320,6 +324,21 @@ The PDS forwards `registerPush` calls with an inter-service JWT signed by the us
 4. Resolves the issuer DID (`did:plc` via plc.directory, `did:web` via `.well-known/did.json`) with request, DNS, redirect, and size limits
 5. Refuses unsafe `did:web` resolution targets such as localhost, private ranges, loopback, link-local, and IMDS-style addresses
 6. Extracts the `#atproto` signing key from the DID document and verifies the ECDSA signature (`ES256` P-256 and `ES256K` secp256k1 only)
+
+### Origin Verify (CDN / WAF shared secret)
+
+Mirrors the AWS CloudFront pattern "Restricting access to your origin through CloudFront using a custom header" — Cloudflare offers the same via Transform Rules. When deployed behind a CDN / WAF, configure the proxy to inject a shared-secret header on every forwarded request and set the matching `ORIGIN_VERIFY_SECRET` on the gateway. Direct origin-bypass requests (e.g. someone discovering the origin IP) are rejected with `403`.
+
+- `ORIGIN_VERIFY_SECRET` — when **unset**, the check is disabled (default).
+- `ORIGIN_VERIFY_HEADER_NAME` — header to inspect; defaults to `X-Origin-Verify`.
+- `ORIGIN_VERIFY_EXCLUDE_HEALTH` — set to `true` to exempt `GET /health` (useful when LB / k8s probes can't set custom headers).
+- `ORIGIN_VERIFY_EXCLUDE_DID_JSON` — set to `true` to exempt `GET /.well-known/did.json`.
+
+By default **all** endpoints are gated, including `/health` and `/.well-known/did.json`, on the assumption that every caller reaches the gateway through the CDN-fronted hostname (which the CDN proxies and decorates with the secret). PDSes resolving the service DID, PDSes forwarding `registerPush`, and clients calling XRPC all go through the same path.
+
+Comparison uses `crypto/subtle.ConstantTimeCompare` to avoid timing leaks. Mismatches are logged with the method, path, and remote address — the offered value is **not** logged.
+
+Example Cloudflare Transform Rule: add request header `X-Origin-Verify` with value `<your-secret>` for hostname `push.example.org`. Example AWS CloudFront: add a custom origin request header in the distribution config; combine with a WAF rule rejecting any request reaching the ALB / origin that lacks the header (the gateway already enforces it, but a WAF rule keeps load off the origin).
 
 ### Display Name Resolution
 

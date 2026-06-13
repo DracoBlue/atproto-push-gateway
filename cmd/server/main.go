@@ -14,6 +14,7 @@ import (
 
 	"github.com/dracoblue/atproto-push-gateway/internal/did"
 	"github.com/dracoblue/atproto-push-gateway/internal/jetstream"
+	"github.com/dracoblue/atproto-push-gateway/internal/originverify"
 	"github.com/dracoblue/atproto-push-gateway/internal/posttext"
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
@@ -59,6 +60,14 @@ func main() {
 	appViewURL := getEnv("PUSH_APPVIEW_URL", "https://public.api.bsky.app")
 	postTextFetch := getEnv("PUSH_POST_TEXT_FETCH", "true") == "true"
 	postTextCacheSize := getEnvInt64("PUSH_POST_TEXT_CACHE_SIZE", 10000)
+
+	// Origin-verify shared-secret middleware (AWS CloudFront / Cloudflare
+	// custom-header pattern). When ORIGIN_VERIFY_SECRET is empty the
+	// middleware is a no-op pass-through.
+	originVerifySecret := getEnv("ORIGIN_VERIFY_SECRET", "")
+	originVerifyHeader := getEnv("ORIGIN_VERIFY_HEADER_NAME", "X-Origin-Verify")
+	originVerifyExcludeHealth := getEnv("ORIGIN_VERIFY_EXCLUDE_HEALTH", "") == "true"
+	originVerifyExcludeDIDJSON := getEnv("ORIGIN_VERIFY_EXCLUDE_DID_JSON", "") == "true"
 
 	// APNs direct delivery (optional)
 	apnsKeyPath := getEnv("APNS_KEY_PATH", "")
@@ -191,6 +200,27 @@ func main() {
 	handler.SetDIDResolver(did.NewResolverWithCacheSize(int(didCacheSize)))
 	handler.RegisterRoutes(mux, serviceDID)
 
+	rootHandler := originverify.Wrap(mux, originverify.Config{
+		Secret:         originVerifySecret,
+		HeaderName:     originVerifyHeader,
+		ExcludeHealth:  originVerifyExcludeHealth,
+		ExcludeDIDJSON: originVerifyExcludeDIDJSON,
+	})
+	if originVerifySecret != "" {
+		exempt := []string{}
+		if originVerifyExcludeHealth {
+			exempt = append(exempt, "/health")
+		}
+		if originVerifyExcludeDIDJSON {
+			exempt = append(exempt, "/.well-known/did.json")
+		}
+		exemptStr := "none"
+		if len(exempt) > 0 {
+			exemptStr = strings.Join(exempt, ", ")
+		}
+		log.Printf("  OriginVerify: enabled (header=%s, exempt=%s)", originVerifyHeader, exemptStr)
+	}
+
 	bindAddr := ":" + port
 	if devMode && !devModeAllowPublic {
 		bindAddr = "127.0.0.1:" + port
@@ -199,7 +229,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              bindAddr,
-		Handler:           mux,
+		Handler:           rootHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
