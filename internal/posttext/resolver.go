@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	defaultAPIBaseURL    = "https://public.api.bsky.app"
-	defaultCacheTTL      = 24 * time.Hour
-	defaultNegativeTTL   = 5 * time.Minute
-	defaultMaxCacheSize  = 10000
+	defaultAPIBaseURL     = "https://public.api.bsky.app"
+	defaultCacheTTL       = 24 * time.Hour
+	defaultNegativeTTL    = 5 * time.Minute
+	defaultMaxCacheSize   = 10000
 	defaultRequestTimeout = 5 * time.Second
 )
 

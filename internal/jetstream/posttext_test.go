@@ -27,9 +27,9 @@ func TestSanitizePostText(t *testing.T) {
 
 func TestTruncatePostText(t *testing.T) {
 	tests := []struct {
-		name, in   string
-		max        int
-		want       string
+		name, in string
+		max      int
+		want     string
 	}{
 		{"under limit", "hello", 10, "hello"},
 		{"at limit", "hello", 5, "hello"},
