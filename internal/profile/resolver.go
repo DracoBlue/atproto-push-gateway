@@ -40,6 +40,14 @@ func NewResolver() *Resolver {
 	return NewResolverWithCacheSize(defaultMaxCacheSize)
 }
 
+// SetAPIBaseURL overrides the AppView base URL. Must be called before any
+// ResolveProfile call. Empty values are ignored.
+func (r *Resolver) SetAPIBaseURL(u string) {
+	if u != "" {
+		r.apiBaseURL = u
+	}
+}
+
 // NewResolverWithCacheSize creates a resolver whose profile cache is capped
 // at maxCacheSize entries. Sizes <= 0 fall back to the default.
 func NewResolverWithCacheSize(maxCacheSize int) *Resolver {

@@ -14,6 +14,8 @@ import (
 
 	"github.com/dracoblue/atproto-push-gateway/internal/did"
 	"github.com/dracoblue/atproto-push-gateway/internal/jetstream"
+	"github.com/dracoblue/atproto-push-gateway/internal/originverify"
+	"github.com/dracoblue/atproto-push-gateway/internal/posttext"
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
@@ -54,6 +56,18 @@ func main() {
 	didCacheSize := getEnvInt64("DID_CACHE_SIZE", 10000)
 	profileCacheSize := getEnvInt64("PROFILE_CACHE_SIZE", 10000)
 	maxDecompressedBytes := getEnvInt64("JETSTREAM_MAX_DECOMPRESSED_BYTES", 8<<20)
+	postTextMaxGraphemes := getEnvInt64("PUSH_POST_TEXT_MAX_GRAPHEMES", 300)
+	appViewURL := getEnv("PUSH_APPVIEW_URL", "https://public.api.bsky.app")
+	postTextFetch := getEnv("PUSH_POST_TEXT_FETCH", "true") == "true"
+	postTextCacheSize := getEnvInt64("PUSH_POST_TEXT_CACHE_SIZE", 10000)
+
+	// Origin-verify shared-secret middleware (AWS CloudFront / Cloudflare
+	// custom-header pattern). When ORIGIN_VERIFY_SECRET is empty the
+	// middleware is a no-op pass-through.
+	originVerifySecret := getEnv("ORIGIN_VERIFY_SECRET", "")
+	originVerifyHeader := getEnv("ORIGIN_VERIFY_HEADER_NAME", "X-Origin-Verify")
+	originVerifyExcludeHealth := getEnv("ORIGIN_VERIFY_EXCLUDE_HEALTH", "") == "true"
+	originVerifyExcludeDIDJSON := getEnv("ORIGIN_VERIFY_EXCLUDE_DID_JSON", "") == "true"
 
 	// APNs direct delivery (optional)
 	apnsKeyPath := getEnv("APNS_KEY_PATH", "")
@@ -160,10 +174,24 @@ func main() {
 
 	// Initialize profile resolver for display names
 	profileResolver := profile.NewResolverWithCacheSize(int(profileCacheSize))
+	profileResolver.SetAPIBaseURL(appViewURL)
 
 	// Initialize Jetstream consumer
 	consumer := jetstream.NewConsumer(jetstreamURL, s, sender, profileResolver)
 	consumer.SetMaxDecompressedBytes(maxDecompressedBytes)
+	consumer.SetPostTextMaxGraphemes(int(postTextMaxGraphemes))
+
+	// Lazy post-text fetching for like / repost / *-via-repost. Disabled
+	// when PUSH_POST_TEXT_FETCH=false. Reply / quote / mention always carry
+	// their text inline from Jetstream and don't depend on this.
+	if postTextFetch {
+		postTextResolver := posttext.NewResolverWithCacheSize(int(postTextCacheSize))
+		postTextResolver.SetAPIBaseURL(appViewURL)
+		consumer.SetPostTextResolver(postTextResolver)
+		log.Printf("  PostText:  enabled (appview=%s, cache=%d)", appViewURL, postTextCacheSize)
+	} else {
+		log.Printf("  PostText:  disabled (PUSH_POST_TEXT_FETCH=false)")
+	}
 	go consumer.Run()
 
 	// Initialize HTTP server
@@ -171,6 +199,27 @@ func main() {
 	handler := xrpc.NewHandler(s, devMode, serviceDID, func() interface{} { return consumer.GetStats() }, consumer.NotifyTokenRegistered)
 	handler.SetDIDResolver(did.NewResolverWithCacheSize(int(didCacheSize)))
 	handler.RegisterRoutes(mux, serviceDID)
+
+	rootHandler := originverify.Wrap(mux, originverify.Config{
+		Secret:         originVerifySecret,
+		HeaderName:     originVerifyHeader,
+		ExcludeHealth:  originVerifyExcludeHealth,
+		ExcludeDIDJSON: originVerifyExcludeDIDJSON,
+	})
+	if originVerifySecret != "" {
+		exempt := []string{}
+		if originVerifyExcludeHealth {
+			exempt = append(exempt, "/health")
+		}
+		if originVerifyExcludeDIDJSON {
+			exempt = append(exempt, "/.well-known/did.json")
+		}
+		exemptStr := "none"
+		if len(exempt) > 0 {
+			exemptStr = strings.Join(exempt, ", ")
+		}
+		log.Printf("  OriginVerify: enabled (header=%s, exempt=%s)", originVerifyHeader, exemptStr)
+	}
 
 	bindAddr := ":" + port
 	if devMode && !devModeAllowPublic {
@@ -180,7 +229,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              bindAddr,
-		Handler:           mux,
+		Handler:           rootHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
