@@ -48,7 +48,7 @@ The gateway:
 
 ### Push Payload
 
-The gateway sends English `title` and `body` as defaults, plus structured `data` fields for client-side localization. Clients with an iOS Notification Service Extension or Android background handler can use the `data` fields to format localized text and override the defaults. `mutableContent: true` tells iOS to invoke the NSE before display.
+The gateway sends English `title` and `body` as defaults, plus structured `data` fields for client-side localization. Clients with an iOS Notification Service Extension or Android background handler can use the `data` fields to format localized text and override the defaults. `mutableContent: true` tells iOS to invoke the NSE before display. See [docs/LOCALIZATION.md](docs/LOCALIZATION.md) for the rationale and the Android caveat around the `notification` block.
 
 ```json
 {
