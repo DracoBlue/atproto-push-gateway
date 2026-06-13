@@ -388,9 +388,11 @@ default:
 
 The NSE has ~30 seconds to modify the notification. If it times out, iOS displays the original English text.
 
-### Android: Background Handler
+### Android: `FirebaseMessagingService`
 
-Android apps can use a background message handler (e.g. via `expo-notifications` or Firebase's `onMessageReceived`) to modify notification content before display. The `data` fields are available in the message payload.
+To rewrite notification content before display, Android clients must subclass `FirebaseMessagingService` and override `onMessageReceived(RemoteMessage)`. The `data` fields are available there.
+
+⚠️ **Caveat:** `onMessageReceived` only fires for backgrounded apps when the FCM payload is **data-only**. The gateway currently ships every Android push with both `notification` *and* `data` — Android renders the `notification` block via the OS and never wakes the app. Client-side rewriting on Android therefore requires a gateway change (always data-only, or a per-registration `clientFormats` capability flag). See [docs/LOCALIZATION.md](docs/LOCALIZATION.md#required-android-behavior).
 
 The gateway sets `android.notification.channel_id` to the `reason` value, so users can configure per-type notification settings (sound, vibration, importance) in Android system settings.
 
