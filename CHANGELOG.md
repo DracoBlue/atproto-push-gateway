@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.0](https://github.com/DracoBlue/atproto-push-gateway/compare/v1.3.0...v1.4.0) (2026-06-13)
+
+
+### Features
+
+* include actor post text in reply/quote/mention notifications ([932ab62](https://github.com/DracoBlue/atproto-push-gateway/commit/932ab622273472267939b13c456d40ec7f36f002))
+* lazy-fetch subject post text for like/repost notifications ([8e6502d](https://github.com/DracoBlue/atproto-push-gateway/commit/8e6502d0921cb2e33a9356d981d54b069d82f843))
+* origin-verify shared-secret middleware for CDN / WAF setups ([855246e](https://github.com/DracoBlue/atproto-push-gateway/commit/855246e8dacfb5c4957c08a2863c5483756d9c4b))
+
 ## [1.3.0](https://github.com/DracoBlue/atproto-push-gateway/compare/v1.2.0...v1.3.0) (2026-06-12)
 
 
