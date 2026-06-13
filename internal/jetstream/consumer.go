@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/dracoblue/atproto-push-gateway/internal/posttext"
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
@@ -111,6 +112,7 @@ type Consumer struct {
 	store                *store.Store
 	sender               push.Sender
 	profileResolver      *profile.Resolver
+	postTextResolver     *posttext.Resolver
 	maxDecompressedBytes uint64
 	postTextMaxGraphemes int
 	lastCursor           atomic.Int64
@@ -179,6 +181,14 @@ func (c *Consumer) SetMaxDecompressedBytes(n int64) {
 	if n > 0 {
 		c.maxDecompressedBytes = uint64(n)
 	}
+}
+
+// SetPostTextResolver enables lazy fetching of the subject post's text for
+// like / repost / like-via-repost / repost-via-repost notifications.
+// Fetching happens only after all delivery gates pass (registered, not
+// blocked, tokens present). Pass nil (the default) to disable.
+func (c *Consumer) SetPostTextResolver(r *posttext.Resolver) {
+	c.postTextResolver = r
 }
 
 // SetPostTextMaxGraphemes overrides the max length of the post text
@@ -662,9 +672,24 @@ var reasonBodyTemplates = map[string]string{
 // (reply/quote/mention). The first %s is the actor name, the second %s
 // is the sanitized + truncated post body.
 var reasonBodyTemplatesWithText = map[string]string{
-	"reply":   "%s replied: %s",
-	"quote":   "%s quoted your post: %s",
-	"mention": "%s mentioned you: %s",
+	"reply":             "%s replied: %s",
+	"quote":             "%s quoted your post: %s",
+	"mention":           "%s mentioned you: %s",
+	"like":              "%s liked your post: %s",
+	"repost":            "%s reposted your post: %s",
+	"like-via-repost":   "%s liked a post you reposted: %s",
+	"repost-via-repost": "%s reposted a post you reposted: %s",
+}
+
+// reasonFetchesSubjectText reports whether a reason warrants a lazy
+// getPosts lookup for the subject post text. Reply/quote/mention already
+// carry text in the Jetstream commit, so they aren't listed here.
+func reasonFetchesSubjectText(reason string) bool {
+	switch reason {
+	case "like", "repost", "like-via-repost", "repost-via-repost":
+		return true
+	}
+	return false
 }
 
 func formatNotification(reason, actorDisplayName, actorHandle, postText string) (string, string) {
@@ -722,6 +747,14 @@ func (c *Consumer) sendNotification(actorDID, targetDID, reason, recordURI, subj
 	actorHandle := ""
 	if c.profileResolver != nil {
 		actorDisplayName, actorHandle = c.profileResolver.ResolveProfile(actorDID)
+	}
+
+	// Lazy-fetch the subject post text for reasons where the post is in
+	// another user's repo (like/repost variants). Only after all delivery
+	// gates pass — we never fetch for a notification we wouldn't send.
+	if postText == "" && subjectURI != "" && c.postTextResolver != nil && reasonFetchesSubjectText(reason) {
+		raw := c.postTextResolver.ResolveText(subjectURI)
+		postText = truncatePostText(sanitizePostText(raw), c.postTextMaxGraphemes)
 	}
 
 	title, body := formatNotification(reason, actorDisplayName, actorHandle, postText)

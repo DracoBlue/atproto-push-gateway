@@ -31,6 +31,8 @@ This document describes which ATproto record types trigger push notifications, w
 
 **Target DID extraction:** `record.subject.uri` → authority part → `did:plc:bob`
 
+**Body template:** `"%s liked your post: %s"` when text is available, otherwise `"%s liked your post"`.
+
 **Push Payload:**
 ```json
 {
@@ -41,12 +43,13 @@ This document describes which ATproto record types trigger push notifications, w
     "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social"
+    "actorHandle": "alice.bsky.social",
+    "reasonSubject": "Hello world"
   }
 }
 ```
 
-**Post text:** Not included. The liked post lives in another user's repo and its text is not part of the like event in Jetstream. Including it would require a separate `com.atproto.repo.getRecord` lookup against the post author's PDS, or a post-text cache populated from `app.bsky.feed.post` events. Deferred.
+**Post text:** Lazy-fetched via the AppView's `app.bsky.feed.getPosts` after all delivery gates pass (registered, not blocked, tokens present), then cached. On fetch error or cache miss the notification is sent **without** `reasonSubject`. Disabled when `PUSH_POST_TEXT_FETCH=false`. See [Post Text Limits](#post-text-limits).
 
 ---
 
@@ -77,6 +80,8 @@ This document describes which ATproto record types trigger push notifications, w
 
 **Target DID extraction:** `record.subject.uri` → authority part → `did:plc:bob`
 
+**Body template:** `"%s reposted your post: %s"` when text is available, otherwise `"%s reposted your post"`.
+
 **Push Payload:**
 ```json
 {
@@ -87,12 +92,13 @@ This document describes which ATproto record types trigger push notifications, w
     "subject": "at://did:plc:bob/app.bsky.feed.post/abc123",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social"
+    "actorHandle": "alice.bsky.social",
+    "reasonSubject": "Hello world"
   }
 }
 ```
 
-**Post text:** Not included — same reason as `like`. The reposted post is in another user's repo.
+**Post text:** Lazy-fetched — same path as `like`. See [Post Text Limits](#post-text-limits).
 
 ---
 
@@ -344,12 +350,13 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
     "subject": "at://did:plc:bob/app.bsky.feed.post/postid123",
     "actorDid": "did:plc:alice",
     "actorDisplayName": "Alice",
-    "actorHandle": "alice.bsky.social"
+    "actorHandle": "alice.bsky.social",
+    "reasonSubject": "Hello world"
   }
 }
 ```
 
-**Post text:** Not included — same reason as `like`. The post text lives in another user's repo.
+**Post text:** Lazy-fetched — same path as `like`. See [Post Text Limits](#post-text-limits).
 
 ---
 
@@ -396,12 +403,13 @@ Note: For mentions, `uri` is the mentioning post (actor's post) and there is no 
     "subject": "at://did:plc:bob/app.bsky.feed.post/postid123",
     "actorDid": "did:plc:dave",
     "actorDisplayName": "Dave",
-    "actorHandle": "dave.bsky.social"
+    "actorHandle": "dave.bsky.social",
+    "reasonSubject": "Hello world"
   }
 }
 ```
 
-**Post text:** Not included — same reason as `repost`. The post text lives in another user's repo.
+**Post text:** Lazy-fetched — same path as `like`. See [Post Text Limits](#post-text-limits).
 
 ---
 
@@ -490,15 +498,22 @@ Note: The gateway stores verification records (verifier + rkey → subject) in S
 
 ## Post Text Limits
 
-For `reply`, `quote`, and `mention` the gateway includes the actor's own post body as `data.reasonSubject` and uses it in the rendered `body`. The text comes straight from `record.text` in the Jetstream commit — no extra fetch is required.
+For `reply`, `quote`, `mention`, `like`, `repost`, `like-via-repost`, and `repost-via-repost` the gateway includes the relevant post body as `data.reasonSubject` and uses it in the rendered `body`.
+
+**Sourcing.**
+
+- `reply` / `quote` / `mention` — text comes straight from `record.text` in the Jetstream commit. No extra fetch.
+- `like` / `repost` / `like-via-repost` / `repost-via-repost` — text is **lazy-fetched** from the AppView's `app.bsky.feed.getPosts` endpoint using the `subject` URI. The fetch happens **after** all delivery gates pass (target is registered, actor is not blocked, push tokens exist) — we never fetch for a notification we wouldn't send. Results are cached in an in-memory LRU. Negative results (deleted / not visible / fetch error) are also cached for a shorter window so subsequent likes/reposts of the same post don't refetch. On any failure the notification is still sent — `reasonSubject` is just omitted.
 
 **Sanitization.** Newlines (`\n`, `\r`) and tabs are replaced with single spaces; runs of whitespace are collapsed; leading/trailing whitespace is trimmed. The result is a single line suitable for a lockscreen.
 
 **Truncation.** The sanitized text is truncated to `PUSH_POST_TEXT_MAX_GRAPHEMES` codepoints (default `300`, matching Bluesky's `MAX_GRAPHEMES` post limit). If truncated, an ellipsis (`…`) is appended. Codepoint count is used as a stand-in for grapheme count; this slightly under-counts text with combining characters but reliably stays within APNS/FCM payload limits (≤ 4 KB).
 
-**Block suppression.** Notifications are dropped entirely when a block exists between the actor and target — see [Block Suppression](#block-suppression). The post text is never sent in that case.
+**Block suppression.** Notifications are dropped entirely when a block exists between the actor and target — see [Block Suppression](#block-suppression). The post text is never fetched in that case.
 
-**Why only reply/quote/mention?** For these reasons the post is the actor's own (it's in the Jetstream commit we already process). For `like`, `repost`, `like-via-repost`, and `repost-via-repost` the relevant post is in *another* user's repo and is not part of the like/repost event. Sourcing it would require a separate `com.atproto.repo.getRecord` lookup or a sidecar post-text cache; both are deferred.
+**Disabling.** Set `PUSH_POST_TEXT_FETCH=false` to turn off lazy fetching entirely. Reply / quote / mention will still carry their inline text from Jetstream; like / repost variants will simply omit `reasonSubject`.
+
+**Configuration.** See the [README](../README.md#configuration) for `PUSH_APPVIEW_URL`, `PUSH_POST_TEXT_FETCH`, `PUSH_POST_TEXT_CACHE_SIZE`, and `PUSH_POST_TEXT_MAX_GRAPHEMES`.
 
 ---
 

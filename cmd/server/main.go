@@ -14,6 +14,7 @@ import (
 
 	"github.com/dracoblue/atproto-push-gateway/internal/did"
 	"github.com/dracoblue/atproto-push-gateway/internal/jetstream"
+	"github.com/dracoblue/atproto-push-gateway/internal/posttext"
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
@@ -55,6 +56,9 @@ func main() {
 	profileCacheSize := getEnvInt64("PROFILE_CACHE_SIZE", 10000)
 	maxDecompressedBytes := getEnvInt64("JETSTREAM_MAX_DECOMPRESSED_BYTES", 8<<20)
 	postTextMaxGraphemes := getEnvInt64("PUSH_POST_TEXT_MAX_GRAPHEMES", 300)
+	appViewURL := getEnv("PUSH_APPVIEW_URL", "https://public.api.bsky.app")
+	postTextFetch := getEnv("PUSH_POST_TEXT_FETCH", "true") == "true"
+	postTextCacheSize := getEnvInt64("PUSH_POST_TEXT_CACHE_SIZE", 10000)
 
 	// APNs direct delivery (optional)
 	apnsKeyPath := getEnv("APNS_KEY_PATH", "")
@@ -161,11 +165,24 @@ func main() {
 
 	// Initialize profile resolver for display names
 	profileResolver := profile.NewResolverWithCacheSize(int(profileCacheSize))
+	profileResolver.SetAPIBaseURL(appViewURL)
 
 	// Initialize Jetstream consumer
 	consumer := jetstream.NewConsumer(jetstreamURL, s, sender, profileResolver)
 	consumer.SetMaxDecompressedBytes(maxDecompressedBytes)
 	consumer.SetPostTextMaxGraphemes(int(postTextMaxGraphemes))
+
+	// Lazy post-text fetching for like / repost / *-via-repost. Disabled
+	// when PUSH_POST_TEXT_FETCH=false. Reply / quote / mention always carry
+	// their text inline from Jetstream and don't depend on this.
+	if postTextFetch {
+		postTextResolver := posttext.NewResolverWithCacheSize(int(postTextCacheSize))
+		postTextResolver.SetAPIBaseURL(appViewURL)
+		consumer.SetPostTextResolver(postTextResolver)
+		log.Printf("  PostText:  enabled (appview=%s, cache=%d)", appViewURL, postTextCacheSize)
+	} else {
+		log.Printf("  PostText:  disabled (PUSH_POST_TEXT_FETCH=false)")
+	}
 	go consumer.Run()
 
 	// Initialize HTTP server

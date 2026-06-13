@@ -35,14 +35,14 @@ The gateway:
 
 | Event | Default Title | Default Body |
 |---|---|---|
-| Like | New like | X liked your post |
-| Repost | New repost | X reposted your post |
-| Reply | New reply | X replied to your post *(or `X replied: <post text>` when text is available)* |
+| Like | New like | X liked your post *(or `X liked your post: <post text>` when text is available)* |
+| Repost | New repost | X reposted your post *(or `X reposted your post: <post text>`)* |
+| Reply | New reply | X replied to your post *(or `X replied: <post text>`)* |
 | Mention | New mention | X mentioned you *(or `X mentioned you: <post text>`)* |
 | Quote | New quote | X quoted your post *(or `X quoted your post: <post text>`)* |
 | Follow | New follower | X followed you |
-| Like via repost | New like | X liked a post you reposted |
-| Repost via repost | New repost | X reposted a post you reposted |
+| Like via repost | New like | X liked a post you reposted *(or `…: <post text>`)* |
+| Repost via repost | New repost | X reposted a post you reposted *(or `…: <post text>`)* |
 | Verified | Verified | Your account has been verified |
 | Unverified | Verification removed | Your account verification was removed |
 
@@ -78,7 +78,7 @@ The gateway sends English `title` and `body` as defaults, plus structured `data`
 | `actorDid` | DID of the actor who performed the action |
 | `actorDisplayName` | Actor's display name (may be empty) |
 | `actorHandle` | Actor's handle (may be empty) |
-| `reasonSubject` | Post text for `reply`, `quote`, `mention` (sanitized, truncated to `PUSH_POST_TEXT_MAX_GRAPHEMES`). Omitted for other reasons — see [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md#post-text-limits). |
+| `reasonSubject` | Post text for `reply`, `quote`, `mention` (inline from Jetstream) and for `like`, `repost`, `like-via-repost`, `repost-via-repost` (lazy-fetched via AppView, cached). Sanitized, truncated to `PUSH_POST_TEXT_MAX_GRAPHEMES`. Omitted on fetch miss / error or when `PUSH_POST_TEXT_FETCH=false` — see [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md#post-text-limits). |
 
 ## Quick Start
 
@@ -194,7 +194,10 @@ docker run -d \
 | `DID_CACHE_SIZE` | `10000` | Max entries in the DID document cache (oldest quarter evicted when full) |
 | `PROFILE_CACHE_SIZE` | `10000` | Max entries in the profile/display name cache (oldest quarter evicted when full) |
 | `JETSTREAM_MAX_DECOMPRESSED_BYTES` | `8388608` (8 MiB) | Max decompressed size of a single Jetstream zstd frame (decompression bomb protection) |
-| `PUSH_POST_TEXT_MAX_GRAPHEMES` | `300` | Max length (codepoints) of the post text included as `reasonSubject` for `reply` / `quote` / `mention`. Matches Bluesky's `MAX_GRAPHEMES` post limit. |
+| `PUSH_POST_TEXT_MAX_GRAPHEMES` | `300` | Max length (codepoints) of the post text included as `reasonSubject`. Matches Bluesky's `MAX_GRAPHEMES` post limit. |
+| `PUSH_APPVIEW_URL` | `https://public.api.bsky.app` | AppView base URL. Used by both the profile resolver (display names) and the post-text resolver (lazy fetch for like/repost variants). |
+| `PUSH_POST_TEXT_FETCH` | `true` | Set to `false` to disable lazy fetching of post text for `like` / `repost` / `like-via-repost` / `repost-via-repost`. `reply` / `quote` / `mention` still carry inline text from Jetstream regardless. |
+| `PUSH_POST_TEXT_CACHE_SIZE` | `10000` | Max entries in the post-text cache (oldest quarter evicted when full). |
 
 ## Runtime Defaults
 
