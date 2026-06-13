@@ -80,6 +80,7 @@ func main() {
 	// FCM direct delivery (optional)
 	fcmServiceAccountPath := getEnv("FCM_SERVICE_ACCOUNT_PATH", "")
 	fcmServiceAccountBase64 := getEnv("FCM_SERVICE_ACCOUNT_BASE64", "")
+	fcmDataOnly := getEnv("FCM_DATA_ONLY", "") == "true"
 
 	log.Printf("Starting atproto-push-gateway")
 	log.Printf("  DID:       %s", serviceDID)
@@ -166,8 +167,13 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to initialize FCM sender: %v", err)
 		}
+		fcmSender.SetDataOnly(fcmDataOnly)
 		sender.FCM = fcmSender
-		log.Printf("  FCM:       enabled")
+		if fcmDataOnly {
+			log.Printf("  FCM:       enabled (data-only — clients localize via FirebaseMessagingService)")
+		} else {
+			log.Printf("  FCM:       enabled (notification messages — OS renders text)")
+		}
 	} else {
 		log.Printf("  FCM:       disabled (using Expo for Android)")
 	}
