@@ -29,14 +29,21 @@ The gateway sets `mutable-content: 1` on every APNs payload (both direct APNs an
 
 ### Required Android behavior
 
-⚠️ **Current FCM payload includes a `notification` block.** When the app is backgrounded, Android renders that block directly via the OS and never wakes the app — so the client cannot intercept. To allow client-side rewriting on Android, the gateway must send a **data-only** message (no `notification` field) so the registered `FirebaseMessagingService` fires for every push, regardless of foreground state.
+By default the FCM payload includes a `notification` block. When the app is backgrounded, Android renders that block directly via the OS and never wakes the app — so the client cannot intercept it. To allow client-side rewriting, the gateway must send a **data-only** message (no `notification` field) so the registered `FirebaseMessagingService` fires for every push, regardless of foreground state.
 
-Options for evolving the Android behavior:
+**Set `FCM_DATA_ONLY=true`** to switch direct FCM delivery to data-only. In that mode the gateway:
 
-- **Always data-only on Android.** Simpler, but breaks any client that relies on the OS-rendered fallback. Acceptable if the gateway is only consumed by clients that ship a `FirebaseMessagingService`.
-- **Per-registration capability flag.** Add a `clientFormats: true` field to `registerPush`. When set, the gateway omits the `notification` block. Clients without a rewrite layer keep the current behavior. This is the recommended path if a heterogeneous client ecosystem is expected.
+- omits the top-level `notification` block and the `android.notification` block (either one would make FCM treat the message as a notification message and skip the client when backgrounded);
+- keeps `android.priority: high` so the message still wakes a dozing app;
+- carries the English `title`/`body` and the `channelId` (the `reason` value) inside the `data` payload, so a client can show the English fallback and pick the right channel itself.
 
-Neither change has been implemented yet.
+The client's `FirebaseMessagingService.onMessageReceived` then fires for every push and builds a localized, OS-displayed notification from the `data` fields.
+
+This is a **deployment-wide** switch rather than a per-registration capability flag. A per-call `clientFormats` field was considered but rejected: `registerPush` is forwarded and validated against the official lexicon by the user's PDS, which may strip or reject unknown fields. Since a self-hosted gateway typically serves a single app (or a known set that all ship a `FirebaseMessagingService`), a deployment switch is both simpler and more robust.
+
+> **Trade-off:** with `FCM_DATA_ONLY=true`, an Android client that does *not* implement a `FirebaseMessagingService` will receive the push but display nothing while backgrounded. Only enable it when every Android client of this deployment handles data messages.
+
+> **Expo note:** this switch applies to **direct FCM** only. Android pushes routed through the Expo Push API (`ExponentPushToken[...]`) are unaffected; localization there depends on the `expo-notifications` background handler.
 
 ## Prior art
 

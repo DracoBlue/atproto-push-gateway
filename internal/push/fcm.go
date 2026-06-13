@@ -20,6 +20,17 @@ type FCMSender struct {
 	tokenSource oauth2.TokenSource
 	client      *http.Client
 	baseURL     string // overridable in tests; defaults to the FCM API
+	dataOnly    bool   // when true, omit the notification block so the client can localize
+}
+
+// SetDataOnly controls whether Android pushes are sent as data-only messages.
+// When enabled, the top-level notification block is omitted so a client's
+// FirebaseMessagingService fires for backgrounded apps and can rewrite the
+// text (localization). The English title/body are carried in the data payload
+// as a fallback. When disabled (default), the gateway sends a notification
+// message that the OS renders directly.
+func (f *FCMSender) SetDataOnly(enabled bool) {
+	f.dataOnly = enabled
 }
 
 // NewFCMSender creates a sender from a service account JSON file path.
@@ -105,18 +116,36 @@ func (f *FCMSender) Send(n Notification) error {
 	msg := fcmRequest{
 		Message: fcmMessage{
 			Token: n.Token,
-			Notification: &fcmNotification{
-				Title: n.Title,
-				Body:  n.Body,
-			},
-			Data: n.Data,
+			Data:  n.Data,
 			Android: &fcmAndroid{
 				Priority: "high",
-				Notification: &fcmAndroidNotif{
-					ChannelID: channelID,
-				},
 			},
 		},
+	}
+
+	if f.dataOnly {
+		// Data-only: no notification block (top-level or android), so FCM
+		// always wakes the client's FirebaseMessagingService — even when the
+		// app is backgrounded — letting it build a localized notification from
+		// the data fields. Carry the English title/body in data as a fallback
+		// and the channel id so the client can pick the channel itself.
+		data := make(map[string]string, len(n.Data)+3)
+		for k, v := range n.Data {
+			data[k] = v
+		}
+		data["title"] = n.Title
+		data["body"] = n.Body
+		data["channelId"] = channelID
+		msg.Message.Data = data
+	} else {
+		// Notification message: the OS renders title/body directly.
+		msg.Message.Notification = &fcmNotification{
+			Title: n.Title,
+			Body:  n.Body,
+		}
+		msg.Message.Android.Notification = &fcmAndroidNotif{
+			ChannelID: channelID,
+		}
 	}
 
 	body, err := json.Marshal(msg)

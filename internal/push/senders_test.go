@@ -309,6 +309,84 @@ func TestFCMSend(t *testing.T) {
 	}
 }
 
+func TestFCMSend_DataOnlyOmitsNotificationBlock(t *testing.T) {
+	var raw map[string]json.RawMessage
+	var gotReq fcmRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var outer struct {
+			Message json.RawMessage `json:"message"`
+		}
+		json.NewDecoder(r.Body).Decode(&outer)
+		json.Unmarshal(outer.Message, &raw)
+		json.Unmarshal([]byte(`{"message":`+string(outer.Message)+`}`), &gotReq)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	f := newTestFCMSender(srv.URL)
+	f.SetDataOnly(true)
+	if err := f.Send(testNotification("fcm-device-token", "android")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No top-level notification block — this is what makes FCM wake the client.
+	if _, ok := raw["notification"]; ok {
+		t.Error("expected no top-level notification block in data-only mode")
+	}
+	// android block keeps high priority but carries no notification sub-block.
+	if gotReq.Message.Android == nil || gotReq.Message.Android.Priority != "high" {
+		t.Error("expected android.priority=high in data-only mode")
+	}
+	if gotReq.Message.Android.Notification != nil {
+		t.Error("expected no android.notification block in data-only mode")
+	}
+	// English fallback + channel travel in the data payload.
+	if gotReq.Message.Data["title"] != "New like" || gotReq.Message.Data["body"] != "Alice liked your post" {
+		t.Errorf("expected title/body in data, got %q / %q", gotReq.Message.Data["title"], gotReq.Message.Data["body"])
+	}
+	if gotReq.Message.Data["channelId"] != "like" {
+		t.Errorf("expected channelId=like in data, got %q", gotReq.Message.Data["channelId"])
+	}
+	if gotReq.Message.Data["reason"] != "like" {
+		t.Errorf("expected reason preserved in data, got %q", gotReq.Message.Data["reason"])
+	}
+}
+
+func TestFCMSend_NotificationModeIsDefault(t *testing.T) {
+	var raw map[string]json.RawMessage
+	var gotReq fcmRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var outer struct {
+			Message json.RawMessage `json:"message"`
+		}
+		json.NewDecoder(r.Body).Decode(&outer)
+		json.Unmarshal(outer.Message, &raw)
+		json.Unmarshal([]byte(`{"message":`+string(outer.Message)+`}`), &gotReq)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	f := newTestFCMSender(srv.URL) // dataOnly defaults to false
+	if err := f.Send(testNotification("fcm-device-token", "android")); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := raw["notification"]; !ok {
+		t.Error("expected a top-level notification block in default mode")
+	}
+	if gotReq.Message.Notification == nil || gotReq.Message.Notification.Title != "New like" {
+		t.Error("expected notification.title in default mode")
+	}
+	if gotReq.Message.Android == nil || gotReq.Message.Android.Notification == nil ||
+		gotReq.Message.Android.Notification.ChannelID != "like" {
+		t.Error("expected android.notification.channel_id=like in default mode")
+	}
+	// Default mode must not inject title/body/channelId into data.
+	if _, ok := gotReq.Message.Data["title"]; ok {
+		t.Error("did not expect title in data in default mode")
+	}
+}
+
 func TestFCMSend_UnregisteredTokenIsInvalid(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)

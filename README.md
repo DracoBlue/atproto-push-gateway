@@ -190,6 +190,7 @@ docker run -d \
 | `APNS_SANDBOX` | (empty) | Set to `true` for APNs sandbox (dev/preview builds) |
 | `FCM_SERVICE_ACCOUNT_PATH` | (empty) | Path to Firebase service account JSON (for direct FCM delivery) |
 | `FCM_SERVICE_ACCOUNT_BASE64` | (empty) | Base64-encoded service account JSON (alternative to file path) |
+| `FCM_DATA_ONLY` | (empty) | Set to `true` to send Android pushes as data-only messages so clients can localize via `FirebaseMessagingService`. Only enable if every Android client handles data messages — see [docs/LOCALIZATION.md](docs/LOCALIZATION.md#required-android-behavior) |
 | `LOG_LEVEL` | `info` | Set to `debug` to log truncated push token prefixes; otherwise tokens are logged as `[redacted]` |
 | `DID_CACHE_SIZE` | `10000` | Max entries in the DID document cache (oldest quarter evicted when full) |
 | `PROFILE_CACHE_SIZE` | `10000` | Max entries in the profile/display name cache (oldest quarter evicted when full) |
@@ -218,6 +219,7 @@ docker run -d \
 | Jetstream dispatch | `8` workers, queue size `1024` | If the queue fills, new events are dropped and counted in `/health` as `eventsDropped`. |
 | Registered tokens | max `20` per DID | Additional registrations for the same DID are rejected. |
 | Invalid token cleanup | automatic | APNs `410` / `Unregistered` / `BadDeviceToken` and FCM `UNREGISTERED` / `NOT_FOUND` responses remove the stored token. |
+| Android FCM payload | notification message (OS renders text) | Set `FCM_DATA_ONLY=true` for data-only delivery so clients localize via `FirebaseMessagingService`. |
 | Block backfill | `100` records/page, max `20` pages | On first token registration, historical blocks are backfilled once from the public AppView. |
 
 ## Production Setup
@@ -392,9 +394,9 @@ The NSE has ~30 seconds to modify the notification. If it times out, iOS display
 
 To rewrite notification content before display, Android clients must subclass `FirebaseMessagingService` and override `onMessageReceived(RemoteMessage)`. The `data` fields are available there.
 
-⚠️ **Caveat:** `onMessageReceived` only fires for backgrounded apps when the FCM payload is **data-only**. The gateway currently ships every Android push with both `notification` *and* `data` — Android renders the `notification` block via the OS and never wakes the app. Client-side rewriting on Android therefore requires a gateway change (always data-only, or a per-registration `clientFormats` capability flag). See [docs/LOCALIZATION.md](docs/LOCALIZATION.md#required-android-behavior).
+⚠️ **Caveat:** `onMessageReceived` only fires for backgrounded apps when the FCM payload is **data-only**. By default the gateway ships every Android push with both `notification` *and* `data` — Android renders the `notification` block via the OS and never wakes the app, so client-side rewriting is impossible. Set **`FCM_DATA_ONLY=true`** to switch direct FCM to data-only: the gateway then drops the `notification` block, keeps `android.priority: high`, and carries the English `title`/`body` plus `channelId` in the `data` payload. Only enable this if every Android client implements a `FirebaseMessagingService` — clients without one will display nothing while backgrounded. See [docs/LOCALIZATION.md](docs/LOCALIZATION.md#required-android-behavior).
 
-The gateway sets `android.notification.channel_id` to the `reason` value, so users can configure per-type notification settings (sound, vibration, importance) in Android system settings.
+In the default (notification) mode the gateway sets `android.notification.channel_id` to the `reason` value, so users can configure per-type notification settings (sound, vibration, importance) in Android system settings. In data-only mode the client picks the channel from the `channelId` data field.
 
 ### Data Fields for Localization
 
@@ -405,6 +407,8 @@ The gateway sets `android.notification.channel_id` to the `reason` value, so use
 | `actorHandle` | `alice.bsky.social` | Actor's handle (fallback if no display name) |
 
 Supported `reason` values: `like`, `repost`, `reply`, `mention`, `quote`, `follow`, `like-via-repost`, `repost-via-repost`, `verified`, `unverified`
+
+With `FCM_DATA_ONLY=true`, the Android `data` payload additionally carries `title`, `body` (the English fallback) and `channelId` (equal to `reason`) so the client can render without inspecting the omitted `notification` block.
 
 ## Roadmap
 
