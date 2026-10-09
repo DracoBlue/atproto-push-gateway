@@ -176,3 +176,68 @@ func truncate(s string) string {
 	}
 	return s[:16] + "…"
 }
+
+// Describe renders the structure of an Authorization header for diagnostics,
+// without reproducing anything replayable.
+//
+// The JWT is deliberately omitted. It is not a secret in the usual sense, but
+// it stays valid for hours, so a leaked log plus a known endpoint URL would
+// let someone replay a push that passes the pinning check. The parts that
+// matter for diagnosing a format mismatch — the scheme word, which parameters
+// are present, the public key, and the claims — carry no such risk.
+func Describe(authorization string) string {
+	if authorization == "" {
+		return "no Authorization header"
+	}
+
+	scheme := authorization
+	if i := strings.IndexAny(authorization, " \t"); i >= 0 {
+		scheme = authorization[:i]
+	}
+
+	var params []string
+	for _, part := range strings.Split(authorization, ",") {
+		if key, _, found := strings.Cut(strings.TrimSpace(part), "="); found {
+			key = strings.TrimSpace(key)
+			if i := strings.IndexAny(key, " \t"); i >= 0 {
+				key = key[i+1:]
+			}
+			params = append(params, key)
+		}
+	}
+
+	out := fmt.Sprintf("scheme=%q params=%v", scheme, params)
+
+	h, err := ParseHeader(authorization)
+	if err != nil {
+		return out + fmt.Sprintf(" parse=%v", err)
+	}
+
+	if raw, err := decodeKey(h.PublicKey); err == nil {
+		out += fmt.Sprintf(" k=%d bytes", len(raw))
+		if len(raw) > 0 {
+			out += fmt.Sprintf(" prefix=0x%02x", raw[0])
+		}
+	} else {
+		out += " k=undecodable"
+	}
+
+	// Claims only, never the signature.
+	if claims := peekClaims(h.Token); claims != "" {
+		out += " claims=" + claims
+	}
+	return out
+}
+
+// peekClaims decodes a JWT's payload without verifying it, for logging.
+func peekClaims(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}

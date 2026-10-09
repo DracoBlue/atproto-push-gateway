@@ -1,3 +1,6 @@
 /server
 /.env
 coverage.out
+
+# Local secrets, never commit
+.token

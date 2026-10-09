@@ -92,7 +92,8 @@ type Handler struct {
 	sender  push.Sender
 	baseURL string // public origin, e.g. "https://push.kiesel.app"
 
-	limiter *rateLimiter
+	limiter   *rateLimiter
+	shapeOnce sync.Once
 }
 
 // NewHandler builds a relay handler. baseURL is the publicly reachable
@@ -269,6 +270,12 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Log the shape of the first accepted push after startup. The header
+	// format was derived from RFC 8292 rather than observed, so one sample of
+	// what real senders actually produce is worth having — a format mismatch
+	// would otherwise drop every push silently with a 202.
+	h.logShapeOnce(r)
+
 	// VAPID. A mismatch means someone other than the registered instance is
 	// pushing here. Accept and drop: signalling the rejection with a 4xx
 	// would hand that someone the power to kill the subscription.
@@ -277,7 +284,11 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[relay] unpinned endpoint accepted a push with bad VAPID (%v) — "+
 				"re-register with vapidPublicKey to close this", err)
 		} else {
-			log.Printf("[relay] dropping push with failed VAPID check: %v", err)
+			// Always describe the header on a failed check. A silent 202 is
+			// indistinguishable from "no notifications happened", so without
+			// this an operator has nothing to go on.
+			log.Printf("[relay] dropping push with failed VAPID check: %v | %s",
+				err, vapid.Describe(r.Header.Get("Authorization")))
 			h.accepted(w)
 			return
 		}
@@ -362,6 +373,22 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+// logShapeOnce reports the headers of the first push to arrive after startup,
+// so the wire format can be compared against what the parser expects. Once per
+// process, so a busy relay does not flood its log.
+func (h *Handler) logShapeOnce(r *http.Request) {
+	h.shapeOnce.Do(func() {
+		log.Printf("[relay] first push shape: Content-Encoding=%q Content-Type=%q TTL=%q Urgency=%q Unsubscribe-URL=%v",
+			r.Header.Get("Content-Encoding"),
+			r.Header.Get("Content-Type"),
+			r.Header.Get("TTL"),
+			r.Header.Get("Urgency"),
+			r.Header.Get("Unsubscribe-URL") != "",
+		)
+		log.Printf("[relay] first push VAPID: %s", vapid.Describe(r.Header.Get("Authorization")))
+	})
 }
 
 // accepted answers a dropped-but-not-rejected push. 202 tells the sender the

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -211,5 +212,61 @@ func TestVerify_PointNotOnCurve(t *testing.T) {
 
 	if err := Verify(header, ""); !errors.Is(err, ErrMalformed) {
 		t.Errorf("expected ErrMalformed for off-curve point, got %v", err)
+	}
+}
+
+// Describe must never reproduce the JWT: it stays valid for hours, so a
+// leaked log plus a known endpoint URL would allow a replayed push that
+// passes the pinning check.
+func TestDescribe_NeverLeaksTheJWT(t *testing.T) {
+	key, pub := testKey(t)
+	header := signedHeader(t, key, pub, time.Now().Add(time.Hour))
+	token := header[len("vapid t="):strings.Index(header, ",k=")]
+
+	out := Describe(header)
+
+	if strings.Contains(out, token) {
+		t.Fatal("Describe reproduced the full JWT")
+	}
+	// The signature is the part that makes a replay possible.
+	sig := token[strings.LastIndex(token, ".")+1:]
+	if strings.Contains(out, sig) {
+		t.Error("Describe reproduced the JWT signature")
+	}
+}
+
+func TestDescribe_ReportsUsefulStructure(t *testing.T) {
+	key, pub := testKey(t)
+	header := signedHeader(t, key, pub, time.Now().Add(time.Hour))
+
+	out := Describe(header)
+
+	for _, want := range []string{`scheme="vapid"`, "k=65 bytes", "prefix=0x04", "claims="} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Describe output missing %q\n  got: %s", want, out)
+		}
+	}
+	// Claims are what tell us whether aud/exp/sub look as expected.
+	if !strings.Contains(out, "push.example.org") {
+		t.Errorf("expected the aud claim in the output, got: %s", out)
+	}
+}
+
+// A malformed header is exactly when the description matters most.
+func TestDescribe_HandlesMalformedHeaders(t *testing.T) {
+	cases := map[string]string{
+		"empty":        "",
+		"wrong scheme": "WebPush t=abc,k=def",
+		"missing k":    "vapid t=abc",
+		"garbage":      "!!!",
+		"no params":    "vapid",
+	}
+	for name, input := range cases {
+		t.Run(name, func(t *testing.T) {
+			out := Describe(input) // must not panic
+			if out == "" {
+				t.Error("Describe returned an empty string")
+			}
+		})
 	}
 }
