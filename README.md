@@ -2,6 +2,11 @@
 
 A self-hosted push notification gateway for [AT Protocol](https://atproto.com/) apps. Receives `registerPush` calls from any PDS and delivers native push notifications (FCM/APNs/Expo) when social events occur.
 
+It also ships a second, independent feature: a **Fediverse Web Push relay**
+that forwards encrypted Web Push deliveries from Mastodon-compatible servers
+to APNs/FCM, so one deployment can serve both protocols. See
+[docs/WEBPUSH_RELAY.md](docs/WEBPUSH_RELAY.md).
+
 ## Why?
 
 Bluesky's push infrastructure (`push.bsky.app`) is closed source and does not send push notifications to third-party apps. If you build your own ATproto client, you need your own push gateway. This project fills that gap.
@@ -180,6 +185,7 @@ docker run -d \
 | `SQLITE_PATH` | `./push-gateway.db` | Path to SQLite database file |
 | `JETSTREAM_URL` | `wss://jetstream2.us-east.bsky.network/subscribe` | Jetstream WebSocket URL |
 | `EXPO_PUSH_ACCESS_TOKEN` | (empty) | Expo Push API access token |
+| `RELAY_BASE_URL` | (empty) | Public origin for the Fediverse Web Push relay (e.g. `https://push.example.org`). Empty disables the relay. See [docs/WEBPUSH_RELAY.md](docs/WEBPUSH_RELAY.md). |
 | `DEV_MODE` | (empty) | Set to `true` to enable test endpoints and allow the `X-Actor-DID` header to bypass JWT verification for local testing |
 | `DEV_MODE_ALLOW_PUBLIC` | (empty) | Set to `true` to bind dev mode publicly; otherwise `DEV_MODE=true` binds to `127.0.0.1` only |
 | `APNS_KEY_PATH` | (empty) | Path to APNs .p8 key file (for direct APNs delivery) |
