@@ -13,6 +13,7 @@ import (
 	"crypto/subtle"
 	"log"
 	"net/http"
+	"strings"
 )
 
 // Config controls the middleware behavior.
@@ -34,6 +35,21 @@ type Config struct {
 	// service-auth verification by external PDSes.
 	ExcludeDIDJSON bool
 }
+
+// relayPrefix is the path tree served by the web push relay.
+//
+// Requests here arrive straight from arbitrary Fediverse servers, which
+// cannot be asked to attach an origin-verify header. The exemption is
+// unconditional, and not an operator option, because getting it wrong is
+// silent and permanent: Mastodon destroys a push subscription on any 4xx
+// other than 408/429, so a single 403 from this middleware would end that
+// user's notifications until they re-register — with nothing in the client
+// to indicate why.
+//
+// The relay is not left unprotected by this. It authenticates senders with
+// pinned VAPID keys and an unguessable endpoint id, which is the appropriate
+// control for a path the public must reach.
+const relayPrefix = "/relay/"
 
 // Wrap returns next unchanged when cfg.Secret is empty. Otherwise it
 // returns a handler that requires every request to carry the configured
@@ -65,6 +81,9 @@ func Wrap(next http.Handler, cfg Config) http.Handler {
 }
 
 func isExempt(r *http.Request, cfg Config) bool {
+	if strings.HasPrefix(r.URL.Path, relayPrefix) {
+		return true
+	}
 	if cfg.ExcludeHealth && r.URL.Path == "/health" {
 		return true
 	}

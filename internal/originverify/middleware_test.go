@@ -94,3 +94,39 @@ func TestWrap_ExemptionDoesNotLeakSimilarPaths(t *testing.T) {
 		t.Errorf("/healthcheck should not be exempt, got %d", rec.Code)
 	}
 }
+
+// The relay path serves arbitrary Fediverse servers, which cannot attach an
+// origin-verify header. The exemption is unconditional: a 403 here would
+// make Mastodon destroy the user's push subscription (it drops a
+// subscription on any 4xx except 408/429), silently and permanently.
+func TestWrap_RelayPathAlwaysExempt(t *testing.T) {
+	h := Wrap(okHandler(), Config{Secret: "topsecret"})
+
+	for _, path := range []string{
+		"/relay/register",
+		"/relay/unregister",
+		"/relay/some-opaque-endpoint-id",
+	} {
+		rec := do(t, h, "POST", path, "", "")
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s: expected 200 without the origin header, got %d", path, rec.Code)
+		}
+	}
+}
+
+// The exemption must be anchored to the /relay/ prefix, not merely contained
+// anywhere in the path, so it cannot be used to bypass the gate.
+func TestWrap_RelayExemptionIsPrefixAnchored(t *testing.T) {
+	h := Wrap(okHandler(), Config{Secret: "topsecret"})
+
+	for _, path := range []string{
+		"/xrpc/app.bsky.notification.registerPush?x=/relay/",
+		"/sneaky/relay/thing",
+		"/relay",
+	} {
+		rec := do(t, h, "POST", path, "", "")
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s: expected 403, got %d", path, rec.Code)
+		}
+	}
+}
