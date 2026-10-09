@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/DracoBlue/atproto-push-gateway/compare/v1.4.0...v1.5.0) (2026-06-13)
+
+
+### Features
+
+* **push:** add FCM_DATA_ONLY for client-side Android localization ([4c27556](https://github.com/DracoBlue/atproto-push-gateway/commit/4c275565bcfa86c29743a6603e518cd80ed2f3db))
+
 ## [1.4.0](https://github.com/DracoBlue/atproto-push-gateway/compare/v1.3.0...v1.4.0) (2026-06-13)
 
 
