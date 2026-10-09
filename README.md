@@ -185,8 +185,7 @@ docker run -d \
 | `SQLITE_PATH` | `./push-gateway.db` | Path to SQLite database file |
 | `JETSTREAM_URL` | `wss://jetstream2.us-east.bsky.network/subscribe` | Jetstream WebSocket URL |
 | `EXPO_PUSH_ACCESS_TOKEN` | (empty) | Expo Push API access token |
-| `RELAY_ENABLED` | (empty) | Set to `true` to run the Fediverse Web Push relay. Requires `FCM_DATA_ONLY=true`. See [docs/WEBPUSH_RELAY.md](docs/WEBPUSH_RELAY.md). |
-| `RELAY_BASE_URL` | (derived from `PUSH_GATEWAY_DID`) | Public origin override for the relay. Only needed when it is reachable on a different host. |
+| `RELAY_ENABLED` | (empty) | Set to `true` to run the Fediverse Web Push relay. Requires `FCM_DATA_ONLY=true`. Endpoint URLs are derived from `PUSH_GATEWAY_DID`. See [docs/WEBPUSH_RELAY.md](docs/WEBPUSH_RELAY.md). |
 | `DEV_MODE` | (empty) | Set to `true` to enable test endpoints and allow the `X-Actor-DID` header to bypass JWT verification for local testing |
 | `DEV_MODE_ALLOW_PUBLIC` | (empty) | Set to `true` to bind dev mode publicly; otherwise `DEV_MODE=true` binds to `127.0.0.1` only |
 | `APNS_KEY_PATH` | (empty) | Path to APNs .p8 key file (for direct APNs delivery) |

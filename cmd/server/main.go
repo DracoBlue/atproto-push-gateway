@@ -59,13 +59,10 @@ func main() {
 	maxDecompressedBytes := getEnvInt64("JETSTREAM_MAX_DECOMPRESSED_BYTES", 8<<20)
 	postTextMaxGraphemes := getEnvInt64("PUSH_POST_TEXT_MAX_GRAPHEMES", 300)
 	appViewURL := getEnv("PUSH_APPVIEW_URL", "https://public.api.bsky.app")
-	// Fediverse web push relay. RELAY_ENABLED is the switch; the public
-	// origin defaults to the one derived from PUSH_GATEWAY_DID, the same way
-	// the DID document's serviceEndpoint is, so the origin is configured in
-	// one place. RELAY_BASE_URL only needs setting when the relay is reachable
-	// somewhere other than the gateway's own DID host.
+	// Fediverse web push relay. The public origin is always the one derived
+	// from PUSH_GATEWAY_DID, the same way the DID document's serviceEndpoint
+	// is, so there is exactly one place the gateway's origin is configured.
 	relayEnabled := getEnv("RELAY_ENABLED", "") == "true"
-	relayBaseURL := getEnv("RELAY_BASE_URL", "")
 	postTextFetch := getEnv("PUSH_POST_TEXT_FETCH", "true") == "true"
 	postTextCacheSize := getEnvInt64("PUSH_POST_TEXT_CACHE_SIZE", 10000)
 
@@ -231,20 +228,12 @@ func main() {
 				"FCM_DATA_ONLY=true, or unset RELAY_ENABLED to disable the relay.")
 		}
 
-		baseURL := relayBaseURL
-		if baseURL == "" {
-			// Same derivation as the DID document's serviceEndpoint, so the
-			// origin never has to be stated twice.
-			baseURL = "https://" + strings.TrimPrefix(serviceDID, "did:web:")
-		}
+		// Same derivation as the DID document's serviceEndpoint.
+		baseURL := "https://" + strings.TrimPrefix(serviceDID, "did:web:")
 
 		relay.NewHandler(s, sender, baseURL).RegisterRoutes(mux)
-		log.Printf("Web push relay enabled, endpoints under %s/relay/", strings.TrimRight(baseURL, "/"))
+		log.Printf("Web push relay enabled, endpoints under %s/relay/", baseURL)
 	} else {
-		if relayBaseURL != "" {
-			log.Printf("WARNING: RELAY_BASE_URL is set but RELAY_ENABLED is not \"true\" — " +
-				"the web push relay is NOT running and the value is ignored")
-		}
 		log.Printf("Web push relay disabled (set RELAY_ENABLED=true to enable)")
 	}
 

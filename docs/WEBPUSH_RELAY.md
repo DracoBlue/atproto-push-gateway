@@ -135,17 +135,17 @@ Pinning is what keeps that from being reachable.
 |---|---|---|
 | `RELAY_ENABLED` | `false` | Set to `true` to run the relay. |
 | `FCM_DATA_ONLY` | `false` | Must be `true` whenever the relay is enabled. |
-| `RELAY_BASE_URL` | *(derived)* | Public origin override. Only needed when the relay is reachable somewhere other than the `PUSH_GATEWAY_DID` host. |
 
-By default the public origin is derived from `PUSH_GATEWAY_DID` exactly as the
-DID document's `serviceEndpoint` is — `did:web:push.example.org` becomes
-`https://push.example.org` — so the origin is configured in one place and the
-two cannot drift apart.
+The relay has no origin setting of its own. The endpoint URLs handed to
+clients are built from `PUSH_GATEWAY_DID`, using the same derivation as the
+DID document's `serviceEndpoint` — `did:web:push.example.org` becomes
+`https://push.example.org`. The gateway's origin is therefore stated in one
+place, and the relay cannot end up advertising a host the ATproto side does
+not serve.
 
-Override it only if the relay answers on a different host. The value must be
-an origin a Fediverse server can resolve, since it becomes the prefix of the
-endpoint URLs handed to clients. Setting it without `RELAY_ENABLED=true` logs
-a warning and does nothing.
+This means the relay must answer on the gateway's own DID host. Running it
+elsewhere would need a separate deployment with its own
+`PUSH_GATEWAY_DID`.
 
 **The relay refuses to start without `FCM_DATA_ONLY=true`** — the process
 exits with an explanatory error rather than serving.
