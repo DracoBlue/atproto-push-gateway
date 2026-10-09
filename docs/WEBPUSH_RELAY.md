@@ -256,20 +256,63 @@ relay logs every mismatch. Clients should re-read
 `configuration.vapid.public_key` periodically (app start is enough) and
 re-register when it differs.
 
-## Payload size
+## Observed wire format
 
-APNs allows 4KB total. The ciphertext is base64'd (+33%) and shares the
-payload with the `aps` block, leaving roughly 2.8KB — the `maxCiphertextBytes`
-ceiling in `internal/relay/relay.go`.
-
-Mastodon truncates the notification body to 140 characters, so real payloads
-should land well under 1KB and never approach the ceiling. **This is an
-estimate, not a measurement.** Every push logs its exact ciphertext length:
+Measured against mastodon.social (4.8.0-nightly, 2026-10-09) by subscribing a
+local capture endpoint and decrypting a real `mention` notification.
 
 ```
-[relay] push received: 742 bytes ciphertext, Content-Encoding="aes128gcm", platform=ios
+Content-Encoding: aes128gcm
+Content-Type:     application/octet-stream
+TTL:              172800
+Urgency:          normal
+Unsubscribe-URL:  present
+Authorization:    vapid t=<JWT>,k=<65-byte key>
+  claims: {"aud":"<endpoint origin>","exp":<unix>,"sub":"mailto:staff@mastodon.social"}
+record size:      4096
 ```
 
-Check that against real traffic before building on the assumption. Oversized
-payloads are dropped with a log line rather than truncated, so the failure is
-visible rather than corrupt.
+The VAPID header matches what `internal/vapid` parses: the `vapid` scheme
+word, parameters `t` and `k`, and an uncompressed 65-byte P-256 point. `aud`
+is the endpoint's origin; the relay does not check it, since behind a proxy
+the origin it would compare against is not reliably knowable.
+
+### Payload size
+
+| | |
+|---|---|
+| Observed `mention` ciphertext | 376 B |
+| → APNs payload | ~622 B of 4096 (15%) |
+| Computed worst case (every field maximal, 140 multibyte chars in `body`) | 707 B ciphertext, ~1063 B payload (26%) |
+| `maxCiphertextBytes` ceiling | 2800 B |
+
+`body` is truncated to 140 characters upstream, so the worst case is bounded
+and the ceiling cannot be reached by a well-behaved sender. Oversized payloads
+are dropped with a log line rather than truncated, so a future format change
+fails visibly instead of corruptly.
+
+### Two details that affect client implementations
+
+**`notification_id` is a JSON number, not a string.**
+
+```json
+{"notification_id": 629773749, "notification_type": "mention", ...}
+```
+
+It is Rails' `object.id`, an integer. Decoding it into a `String` field will
+fail — relevant for both the Swift and Kotlin structs.
+
+**`title` and `body` arrive already localized.** Mastodon renders them server
+side under the subscription's locale, which the payload reports as
+`preferred_locale`:
+
+```json
+{"preferred_locale": "de", "title": "Eubecio Insaboth erwähnte dich",
+ "body": "dear @dracoblue"}
+```
+
+This is the opposite of the ATproto side of this gateway, which sends English
+defaults and expects the client to localize from the `data` fields. A client
+handling relayed Fediverse pushes should display `title`/`body` as received
+and must not map `notification_type` through its own translation table — doing
+so would replace the server's correct localization with a second-guess.
