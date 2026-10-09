@@ -59,9 +59,12 @@ func main() {
 	maxDecompressedBytes := getEnvInt64("JETSTREAM_MAX_DECOMPRESSED_BYTES", 8<<20)
 	postTextMaxGraphemes := getEnvInt64("PUSH_POST_TEXT_MAX_GRAPHEMES", 300)
 	appViewURL := getEnv("PUSH_APPVIEW_URL", "https://public.api.bsky.app")
-	// Public origin handed to relay clients as their endpoint prefix. Empty
-	// disables the Fediverse web push relay entirely, since an endpoint URL
-	// the instance cannot resolve is worse than no endpoint at all.
+	// Fediverse web push relay. RELAY_ENABLED is the switch; the public
+	// origin defaults to the one derived from PUSH_GATEWAY_DID, the same way
+	// the DID document's serviceEndpoint is, so the origin is configured in
+	// one place. RELAY_BASE_URL only needs setting when the relay is reachable
+	// somewhere other than the gateway's own DID host.
+	relayEnabled := getEnv("RELAY_ENABLED", "") == "true"
 	relayBaseURL := getEnv("RELAY_BASE_URL", "")
 	postTextFetch := getEnv("PUSH_POST_TEXT_FETCH", "true") == "true"
 	postTextCacheSize := getEnvInt64("PUSH_POST_TEXT_CACHE_SIZE", 10000)
@@ -211,8 +214,7 @@ func main() {
 	handler.SetDIDResolver(did.NewResolverWithCacheSize(int(didCacheSize)))
 	handler.RegisterRoutes(mux, serviceDID)
 
-	// Fediverse web push relay (Mastodon and compatible). Opt-in: it only
-	// serves when an operator has configured the public origin.
+	// Fediverse web push relay (Mastodon and compatible).
 	//
 	// The relay requires FCM_DATA_ONLY. It forwards ciphertext that only the
 	// device can read, so Android delivery has to be a data message: a
@@ -221,17 +223,29 @@ func main() {
 	// woken. Rather than overriding the setting per message, the relay simply
 	// refuses to run without it — a relay that silently delivers unreadable
 	// notifications to every Android user is worse than one that is off.
-	if relayBaseURL != "" {
+	if relayEnabled {
 		if !fcmDataOnly {
-			log.Fatalf("RELAY_BASE_URL is set but FCM_DATA_ONLY is not \"true\": " +
+			log.Fatalf("RELAY_ENABLED is true but FCM_DATA_ONLY is not \"true\": " +
 				"the web push relay forwards ciphertext the client must decrypt, " +
 				"which only reaches the client as a data message. Set " +
-				"FCM_DATA_ONLY=true, or unset RELAY_BASE_URL to disable the relay.")
+				"FCM_DATA_ONLY=true, or unset RELAY_ENABLED to disable the relay.")
 		}
-		relay.NewHandler(s, sender, relayBaseURL).RegisterRoutes(mux)
-		log.Printf("Web push relay enabled, endpoints under %s/relay/", strings.TrimRight(relayBaseURL, "/"))
+
+		baseURL := relayBaseURL
+		if baseURL == "" {
+			// Same derivation as the DID document's serviceEndpoint, so the
+			// origin never has to be stated twice.
+			baseURL = "https://" + strings.TrimPrefix(serviceDID, "did:web:")
+		}
+
+		relay.NewHandler(s, sender, baseURL).RegisterRoutes(mux)
+		log.Printf("Web push relay enabled, endpoints under %s/relay/", strings.TrimRight(baseURL, "/"))
 	} else {
-		log.Printf("Web push relay disabled (set RELAY_BASE_URL to enable)")
+		if relayBaseURL != "" {
+			log.Printf("WARNING: RELAY_BASE_URL is set but RELAY_ENABLED is not \"true\" — " +
+				"the web push relay is NOT running and the value is ignored")
+		}
+		log.Printf("Web push relay disabled (set RELAY_ENABLED=true to enable)")
 	}
 
 	rootHandler := originverify.Wrap(mux, originverify.Config{

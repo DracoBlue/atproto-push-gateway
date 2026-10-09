@@ -133,11 +133,19 @@ Pinning is what keeps that from being reachable.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `RELAY_BASE_URL` | *(empty)* | Public origin, e.g. `https://push.example.org`. Empty disables the relay. |
+| `RELAY_ENABLED` | `false` | Set to `true` to run the relay. |
 | `FCM_DATA_ONLY` | `false` | Must be `true` whenever the relay is enabled. |
+| `RELAY_BASE_URL` | *(derived)* | Public origin override. Only needed when the relay is reachable somewhere other than the `PUSH_GATEWAY_DID` host. |
 
-`RELAY_BASE_URL` must be the origin a Fediverse server can resolve, since it
-becomes the prefix of the endpoint URLs handed to clients.
+By default the public origin is derived from `PUSH_GATEWAY_DID` exactly as the
+DID document's `serviceEndpoint` is — `did:web:push.example.org` becomes
+`https://push.example.org` — so the origin is configured in one place and the
+two cannot drift apart.
+
+Override it only if the relay answers on a different host. The value must be
+an origin a Fediverse server can resolve, since it becomes the prefix of the
+endpoint URLs handed to clients. Setting it without `RELAY_ENABLED=true` logs
+a warning and does nothing.
 
 **The relay refuses to start without `FCM_DATA_ONLY=true`** — the process
 exits with an explanatory error rather than serving.
