@@ -63,6 +63,18 @@ func New(dbPath string) (*Store, error) {
 			actor_did TEXT PRIMARY KEY,
 			backfilled_at TEXT DEFAULT (datetime('now'))
 		);
+		CREATE TABLE IF NOT EXISTS webpush_endpoints (
+			endpoint_hash TEXT PRIMARY KEY,
+			platform TEXT NOT NULL CHECK (platform IN ('ios', 'android')),
+			device_token TEXT NOT NULL,
+			app_id TEXT NOT NULL,
+			vapid_public_key TEXT NOT NULL DEFAULT '',
+			instance TEXT NOT NULL DEFAULT '',
+			created_at TEXT DEFAULT (datetime('now')),
+			last_push_at TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_webpush_device
+			ON webpush_endpoints (device_token, app_id);
 	`); err != nil {
 		return nil, err
 	}
