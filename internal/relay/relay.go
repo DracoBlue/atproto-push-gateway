@@ -217,12 +217,15 @@ func (h *Handler) handleUnregister(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to remove endpoint", http.StatusInternalServerError)
 			return
 		}
+		log.Printf("[relay] unregistered endpoint by URL")
 	case strings.TrimSpace(req.DeviceToken) != "" && strings.TrimSpace(req.AppID) != "":
 		if err := h.store.DeleteWebPushEndpointsForDevice(req.DeviceToken, req.AppID); err != nil {
 			log.Printf("[relay] unregister by device failed: %v", err)
 			http.Error(w, "failed to remove endpoints", http.StatusInternalServerError)
 			return
 		}
+		log.Printf("[relay] unregistered endpoints for %s/%s",
+			req.AppID, truncateToken(req.DeviceToken))
 	default:
 		http.Error(w, "need endpoint, or deviceToken plus appId", http.StatusBadRequest)
 		return
