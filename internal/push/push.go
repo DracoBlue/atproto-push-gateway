@@ -22,6 +22,13 @@ type Notification struct {
 	Title    string
 	Body     string
 	Data     map[string]string
+
+	// DataOnly forces an Android data-only message for this notification,
+	// regardless of the sender's global FCM_DATA_ONLY setting. The web push
+	// relay needs it: only a data message wakes the client that holds the
+	// decryption key, and a notification message would render the
+	// undecryptable placeholder instead.
+	DataOnly bool
 }
 
 type Sender interface {

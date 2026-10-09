@@ -123,7 +123,7 @@ func (f *FCMSender) Send(n Notification) error {
 		},
 	}
 
-	if f.dataOnly {
+	if f.dataOnly || n.DataOnly {
 		// Data-only: no notification block (top-level or android), so FCM
 		// always wakes the client's FirebaseMessagingService — even when the
 		// app is backgrounded — letting it build a localized notification from
