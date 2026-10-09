@@ -106,6 +106,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, serviceDID string) {
 			"registeredDIDs": dids,
 			"totalTokens":    tokens,
 			"trackedBlocks":  blocks,
+			// Fediverse web push relay endpoints, unrelated to the ATproto
+			// token count above.
+			"relayEndpoints": h.store.CountWebPushEndpoints(),
 		}
 		if h.statsProvider != nil {
 			result["jetstream"] = h.statsProvider()

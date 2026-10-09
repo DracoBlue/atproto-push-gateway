@@ -18,6 +18,7 @@ import (
 	"github.com/dracoblue/atproto-push-gateway/internal/posttext"
 	"github.com/dracoblue/atproto-push-gateway/internal/profile"
 	"github.com/dracoblue/atproto-push-gateway/internal/push"
+	"github.com/dracoblue/atproto-push-gateway/internal/relay"
 	"github.com/dracoblue/atproto-push-gateway/internal/store"
 	"github.com/dracoblue/atproto-push-gateway/internal/xrpc"
 )
@@ -58,6 +59,10 @@ func main() {
 	maxDecompressedBytes := getEnvInt64("JETSTREAM_MAX_DECOMPRESSED_BYTES", 8<<20)
 	postTextMaxGraphemes := getEnvInt64("PUSH_POST_TEXT_MAX_GRAPHEMES", 300)
 	appViewURL := getEnv("PUSH_APPVIEW_URL", "https://public.api.bsky.app")
+	// Public origin handed to relay clients as their endpoint prefix. Empty
+	// disables the Fediverse web push relay entirely, since an endpoint URL
+	// the instance cannot resolve is worse than no endpoint at all.
+	relayBaseURL := getEnv("RELAY_BASE_URL", "")
 	postTextFetch := getEnv("PUSH_POST_TEXT_FETCH", "true") == "true"
 	postTextCacheSize := getEnvInt64("PUSH_POST_TEXT_CACHE_SIZE", 10000)
 
@@ -205,6 +210,15 @@ func main() {
 	handler := xrpc.NewHandler(s, devMode, serviceDID, func() interface{} { return consumer.GetStats() }, consumer.NotifyTokenRegistered)
 	handler.SetDIDResolver(did.NewResolverWithCacheSize(int(didCacheSize)))
 	handler.RegisterRoutes(mux, serviceDID)
+
+	// Fediverse web push relay (Mastodon and compatible). Opt-in: it only
+	// serves when an operator has configured the public origin.
+	if relayBaseURL != "" {
+		relay.NewHandler(s, sender, relayBaseURL).RegisterRoutes(mux)
+		log.Printf("Web push relay enabled, endpoints under %s/relay/", strings.TrimRight(relayBaseURL, "/"))
+	} else {
+		log.Printf("Web push relay disabled (set RELAY_BASE_URL to enable)")
+	}
 
 	rootHandler := originverify.Wrap(mux, originverify.Config{
 		Secret:         originVerifySecret,
