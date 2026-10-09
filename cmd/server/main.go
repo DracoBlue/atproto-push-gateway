@@ -213,7 +213,21 @@ func main() {
 
 	// Fediverse web push relay (Mastodon and compatible). Opt-in: it only
 	// serves when an operator has configured the public origin.
+	//
+	// The relay requires FCM_DATA_ONLY. It forwards ciphertext that only the
+	// device can read, so Android delivery has to be a data message: a
+	// notification message would be rendered by the OS as the bare
+	// placeholder, and the client holding the decryption key would never be
+	// woken. Rather than overriding the setting per message, the relay simply
+	// refuses to run without it — a relay that silently delivers unreadable
+	// notifications to every Android user is worse than one that is off.
 	if relayBaseURL != "" {
+		if !fcmDataOnly {
+			log.Fatalf("RELAY_BASE_URL is set but FCM_DATA_ONLY is not \"true\": " +
+				"the web push relay forwards ciphertext the client must decrypt, " +
+				"which only reaches the client as a data message. Set " +
+				"FCM_DATA_ONLY=true, or unset RELAY_BASE_URL to disable the relay.")
+		}
 		relay.NewHandler(s, sender, relayBaseURL).RegisterRoutes(mux)
 		log.Printf("Web push relay enabled, endpoints under %s/relay/", strings.TrimRight(relayBaseURL, "/"))
 	} else {

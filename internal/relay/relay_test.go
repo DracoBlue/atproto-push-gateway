@@ -164,9 +164,6 @@ func TestPush_ValidDeliversCiphertext(t *testing.T) {
 	if n.Token != "device-token-abc" {
 		t.Errorf("wrong device token: %q", n.Token)
 	}
-	if !n.DataOnly {
-		t.Error("relay pushes must be data-only so the client can decrypt")
-	}
 	decoded, err := base64.RawURLEncoding.DecodeString(n.Data["m"])
 	if err != nil {
 		t.Fatalf("data.m is not valid base64url: %v", err)

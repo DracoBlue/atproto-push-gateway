@@ -134,9 +134,28 @@ Pinning is what keeps that from being reachable.
 | Variable | Default | Meaning |
 |---|---|---|
 | `RELAY_BASE_URL` | *(empty)* | Public origin, e.g. `https://push.example.org`. Empty disables the relay. |
+| `FCM_DATA_ONLY` | `false` | Must be `true` whenever the relay is enabled. |
 
-It must be the origin a Fediverse server can resolve, since it becomes the
-prefix of the endpoint URLs handed to clients.
+`RELAY_BASE_URL` must be the origin a Fediverse server can resolve, since it
+becomes the prefix of the endpoint URLs handed to clients.
+
+**The relay refuses to start without `FCM_DATA_ONLY=true`** — the process
+exits with an explanatory error rather than serving.
+
+The reason is that the relay forwards ciphertext only the device can read, so
+on Android it has to arrive as a data message. A notification message would be
+rendered by the OS as the bare placeholder title, and the
+`FirebaseMessagingService` holding the decryption key would never be woken:
+every Android user would get a stream of contentless notifications while the
+ciphertext sat unused in the payload.
+
+Coupling the two settings is deliberate. The alternative — forcing data-only
+per message and leaving the global setting alone — would make the relay work
+under a configuration whose stated behaviour it contradicts. Failing loudly at
+startup is easier to diagnose than notifications that arrive empty.
+
+An iOS-only deployment must still set it; with no FCM sender configured the
+setting has no other effect.
 
 `GET /health` reports `relayEndpoints` alongside the ATproto counters.
 
@@ -178,9 +197,8 @@ authenticated by the VAPID `Authorization` header. Forwarded as:
 }
 ```
 
-Android is always sent data-only, regardless of the gateway's global
-`FCM_DATA_ONLY` setting: a notification message would be rendered by the OS as
-the bare placeholder without ever waking the client that holds the key.
+Android delivery relies on `FCM_DATA_ONLY`, which the relay requires — see
+Configuration.
 
 ### `POST /relay/unregister`
 

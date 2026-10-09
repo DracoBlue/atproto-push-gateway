@@ -318,6 +318,11 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Android delivery depends on the gateway running with FCM_DATA_ONLY: a
+	// notification message would be rendered by the OS as the bare
+	// placeholder without ever waking the client that holds the decryption
+	// key. main() refuses to start the relay without it, so there is no
+	// per-message override here.
 	n := push.Notification{
 		Token:    endpoint.DeviceToken,
 		Platform: endpoint.Platform,
@@ -329,11 +334,6 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request) {
 			"m":      base64.RawURLEncoding.EncodeToString(body),
 			"source": "webpush",
 		},
-		// Android must be data-only regardless of the gateway's global
-		// FCM_DATA_ONLY setting: a notification message would be rendered by
-		// the OS as the bare placeholder without ever waking the client that
-		// holds the decryption key.
-		DataOnly: true,
 	}
 
 	if err := h.sender.Send(n); err != nil {
