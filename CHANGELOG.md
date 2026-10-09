@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.6.0](https://github.com/DracoBlue/atproto-push-gateway/compare/v1.5.0...v1.6.0) (2026-10-09)
+
+
+### Features
+
+* **push:** allow per-notification data-only delivery ([9692d15](https://github.com/DracoBlue/atproto-push-gateway/commit/9692d154058f06626dc8ca8011be9f21bad72572))
+* **relay:** add Fediverse Web Push relay ([7e40027](https://github.com/DracoBlue/atproto-push-gateway/commit/7e4002723fcd8e5f11d586b3383599094a039d14))
+* **relay:** report the wire format of incoming pushes ([9c71008](https://github.com/DracoBlue/atproto-push-gateway/commit/9c710088a3dc29164d549558117c2bfb84f2567d))
+* **store:** add webpush_endpoints for relay endpoint mappings ([6959296](https://github.com/DracoBlue/atproto-push-gateway/commit/6959296a1fccdcc5f3ead57a95721899f95cd26d))
+* **vapid:** verify RFC 8292 Authorization headers against a pinned key ([da3ba98](https://github.com/DracoBlue/atproto-push-gateway/commit/da3ba988240c502e03a368da0f7febec568eddd4))
+
+
+### Bug Fixes
+
+* **originverify:** always exempt the /relay/ path tree ([50816d0](https://github.com/DracoBlue/atproto-push-gateway/commit/50816d0912fbe02abb6c620669194e3ee8ebbe10))
+
 ## [1.5.0](https://github.com/DracoBlue/atproto-push-gateway/compare/v1.4.0...v1.5.0) (2026-06-13)
 
 
